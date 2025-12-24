@@ -1,0 +1,8 @@
+[package]
+name = "forcefield"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = "0.5.3"
+rocket = { version = "0.5.1", features = ["secrets"] }
