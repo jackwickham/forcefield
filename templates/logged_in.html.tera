@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logged In</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="logged-in">
+    <div class="container">
+        <div class="status-card">
+            <div class="status-indicator"></div>
+
+            <div class="status-message">You're logged in</div>
+            <div class="status-detail">Authentication successful</div>
+
+            <div class="user-info">
+                <div class="user-label">Authenticated User</div>
+                <div class="user-name">{{ username }}</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

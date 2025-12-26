@@ -4,7 +4,7 @@ use rocket::{
     response::{Redirect, status::NoContent},
 };
 
-use crate::{authenticated_user::AuthenticatedUser, config::Config};
+use crate::{authenticated_user::AuthenticatedUser, config::Config, login::LoginError};
 
 #[rocket::get("/check-auth")]
 pub fn check_auth(user: AuthenticatedUser) -> WithAuthenticatedHeaders<'static, NoContent> {
@@ -35,6 +35,6 @@ pub async fn unauthorized(req: &Request<'_>) -> Redirect {
         .public_root
         .clone();
     let return_uri = req.headers().get_one("X-Forwarded-Uri");
-    let uri = rocket::uri![root, crate::login::show_login(return_uri)];
+    let uri = rocket::uri![root, crate::login::show_login(return_uri, None::<crate::login::LoginError>)];
     Redirect::to(uri)
 }
