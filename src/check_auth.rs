@@ -35,6 +35,9 @@ pub async fn unauthorized(req: &Request<'_>) -> Redirect {
         .public_root
         .clone();
     let return_uri = req.headers().get_one("X-Forwarded-Uri");
-    let uri = rocket::uri![root, crate::login::show_login(return_uri, None::<crate::login::LoginError>)];
+    let uri = rocket::uri![
+        root,
+        crate::login::show_login(return_uri, None::<crate::login::LoginError>)
+    ];
     Redirect::to(uri)
 }

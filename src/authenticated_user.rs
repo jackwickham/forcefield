@@ -5,8 +5,10 @@ use rocket::{
     http::{Cookie, CookieJar, Status},
     outcome::Outcome,
     request::{self, FromRequest},
-    time::{Duration, OffsetDateTime},
+    time::Duration,
 };
+
+use crate::config::Config;
 
 const USER_COOKIE: &'static str = "forcefield_user";
 
@@ -31,6 +33,7 @@ impl<'r> FromRequest<'r> for AuthenticatedUser {
 
 pub struct AuthenticatedUserStore<'a> {
     cookies: &'a CookieJar<'a>,
+    config: &'a Config<'a>,
 }
 
 impl<'a> AuthenticatedUserStore<'a> {
@@ -45,9 +48,10 @@ impl<'a> AuthenticatedUserStore<'a> {
     pub fn set_authenticated_user(&self, username: &str) {
         self.cookies.add_private(
             Cookie::build((USER_COOKIE, username.to_string()))
-                .domain("localhost")
-                .expires(OffsetDateTime::now_utc() + Duration::hours(1))
+                .domain(self.config.cookie_domain.clone())
+                .max_age(Duration::hours(1))
                 .http_only(true)
+                .same_site(rocket::http::SameSite::Lax)
                 .build(),
         )
     }
@@ -60,6 +64,7 @@ impl<'r> FromRequest<'r> for AuthenticatedUserStore<'r> {
     async fn from_request(req: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
         Outcome::Success(AuthenticatedUserStore {
             cookies: req.cookies(),
+            config: req.rocket().state::<Config>().expect("Config not loaded"),
         })
     }
 }

@@ -10,6 +10,7 @@ use rocket::{
 #[serde(crate = "rocket::serde")]
 pub struct Config<'a> {
     pub public_root: Absolute<'a>,
+    pub cookie_domain: String,
     pub users: Vec<ConfigUser>,
 }
 
