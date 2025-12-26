@@ -1,6 +1,6 @@
 use argon2::{
     Argon2, PasswordHasher, PasswordVerifier,
-    password_hash::{SaltString, rand_core::OsRng},
+    password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
 };
 use rocket::{State, form::Form, http::ext::IntoOwned, response::Redirect};
 
@@ -20,13 +20,7 @@ pub fn login(
 ) -> Result<Redirect, String> {
     for user in &config.users {
         if user.username == request.username {
-            if Argon2::default()
-                .verify_password(
-                    request.password.as_bytes(),
-                    &user.password_hash.password_hash(),
-                )
-                .is_ok()
-            {
+            if verify_password(request.password, &user.password_hash) {
                 authenticated_user_store.set_authenticated_user(&user.username);
                 return Ok(Redirect::to(
                     rocket::http::uri::Reference::parse(next.unwrap_or("/"))
@@ -46,6 +40,12 @@ pub fn hash_password(password: &str) -> String {
     a2.hash_password(password.as_bytes(), &salt)
         .expect("Failed to hash password")
         .to_string()
+}
+
+fn verify_password(password: &str, password_hash: &PasswordHashString) -> bool {
+    Argon2::default()
+        .verify_password(password.as_bytes(), &password_hash.password_hash())
+        .is_ok()
 }
 
 #[derive(rocket::FromForm)]
