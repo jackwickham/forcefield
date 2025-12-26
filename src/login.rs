@@ -5,7 +5,10 @@ use argon2::{
 use rocket::{State, form::Form, http::ext::IntoOwned, response::Redirect};
 use rocket_dyn_templates::{Template, context};
 
-use crate::{authenticated_user::AuthenticatedUserStore, config::Config};
+use crate::{
+    authenticated_user::{AuthenticatedUser, AuthenticatedUserStore},
+    config::Config,
+};
 
 #[derive(Debug, Clone, Copy, rocket::UriDisplayQuery, rocket::FromFormField)]
 pub enum LoginError {
@@ -21,7 +24,12 @@ impl LoginError {
     }
 }
 
-#[rocket::get("/login?<next>&<error>")]
+#[rocket::get("/login", rank = 1)]
+pub fn login_redirect_to_logged_in(_authenticated_user: AuthenticatedUser) -> Redirect {
+    Redirect::to(uri!("/"))
+}
+
+#[rocket::get("/login?<next>&<error>", rank = 2)]
 pub fn show_login(next: Option<&str>, error: Option<LoginError>) -> Template {
     Template::render(
         "login",

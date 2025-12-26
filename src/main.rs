@@ -40,6 +40,7 @@ fn rocket() -> _ {
                 index_logged_in,
                 index_not_logged_in,
                 check_auth::check_auth,
+                login::login_redirect_to_logged_in,
                 login::show_login,
                 login::login,
                 login::hash_password
