@@ -6,7 +6,7 @@ use rocket::{
     State,
     form::Form,
     http::{ext::IntoOwned, uri::Reference},
-    response::Redirect,
+    response::{Redirect, status::Forbidden},
 };
 use rocket_dyn_templates::{Template, context};
 
@@ -79,12 +79,20 @@ pub fn login(
 }
 
 #[rocket::post("/hash-password", data = "<password>")]
-pub fn hash_password(password: &str) -> String {
+pub fn hash_password(
+    password: &str,
+    config: &State<Config>,
+) -> Result<String, Forbidden<&'static str>> {
+    if !config.enable_hash_password {
+        return Err(Forbidden("Endpoint not enabled"));
+    }
+
     let a2 = Argon2::default();
     let salt = SaltString::generate(&mut OsRng);
-    a2.hash_password(password.as_bytes(), &salt)
+    Ok(a2
+        .hash_password(password.as_bytes(), &salt)
         .expect("Failed to hash password")
-        .to_string()
+        .to_string())
 }
 
 fn verify_password(password: &str, password_hash: Option<&PasswordHashString>) -> bool {
