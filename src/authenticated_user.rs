@@ -5,7 +5,6 @@ use rocket::{
     http::{Cookie, CookieJar, Status},
     outcome::Outcome,
     request::{self, FromRequest},
-    time::Duration,
 };
 use serde::{Deserialize, Serialize};
 use time::UtcDateTime;

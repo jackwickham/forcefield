@@ -4,7 +4,7 @@ use argon2::password_hash::PasswordHashString;
 use duration_str::deserialize_duration_time;
 use rocket::{
     http::uri::Absolute,
-    serde::{self, Deserialize, Deserializer, de::Error},
+    serde::{Deserialize, Deserializer, de::Error},
 };
 use time::Duration;
 
