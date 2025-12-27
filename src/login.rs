@@ -2,7 +2,12 @@ use argon2::{
     Argon2, PasswordHasher, PasswordVerifier,
     password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
 };
-use rocket::{State, form::Form, http::ext::IntoOwned, response::Redirect};
+use rocket::{
+    State,
+    form::Form,
+    http::{ext::IntoOwned, uri::Reference},
+    response::Redirect,
+};
 use rocket_dyn_templates::{Template, context};
 
 use crate::{
@@ -24,9 +29,13 @@ impl LoginError {
     }
 }
 
-#[rocket::get("/login", rank = 1)]
-pub fn login_redirect_to_logged_in(_authenticated_user: AuthenticatedUser) -> Redirect {
-    Redirect::to(uri!("/"))
+#[rocket::get("/login?<next>", rank = 1)]
+pub fn login_redirect_to_logged_in(
+    next: Option<&str>,
+    config: &State<Config>,
+    _authenticated_user: AuthenticatedUser,
+) -> Redirect {
+    Redirect::to(get_redirect_uri(next, config))
 }
 
 #[rocket::get("/login?<next>&<error>", rank = 2)]
@@ -51,11 +60,7 @@ pub fn login(
         if user.username == request.username {
             if verify_password(request.password, &user.password_hash) {
                 authenticated_user_store.set_authenticated_user(&user.username);
-                return Redirect::to(
-                    rocket::http::uri::Reference::parse(next.unwrap_or("/"))
-                        .unwrap()
-                        .into_owned(),
-                );
+                return Redirect::to(get_redirect_uri(next, config));
             }
         }
     }
@@ -76,6 +81,17 @@ fn verify_password(password: &str, password_hash: &PasswordHashString) -> bool {
     Argon2::default()
         .verify_password(password.as_bytes(), &password_hash.password_hash())
         .is_ok()
+}
+
+fn get_redirect_uri(uri_param: Option<&str>, config: &Config) -> Reference<'static> {
+    uri_param
+        .and_then(|uri| Reference::parse(uri).ok())
+        .filter(|uri| {
+            uri.authority()
+                .is_some_and(|authority| config.root_domain.eq(authority.host()))
+        })
+        .unwrap_or_else(|| uri!("/").into())
+        .into_owned()
 }
 
 #[derive(rocket::FromForm)]

@@ -18,7 +18,7 @@ fn index_logged_in(user: AuthenticatedUser) -> Template {
     Template::render(
         "logged_in",
         context! {
-            username: user.id,
+            username: user.username,
         },
     )
 }

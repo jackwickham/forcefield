@@ -8,7 +8,7 @@ use crate::{authenticated_user::AuthenticatedUser, config::Config, login::LoginE
 
 #[rocket::get("/check-auth")]
 pub fn check_auth(user: AuthenticatedUser) -> WithAuthenticatedHeaders<'static, NoContent> {
-    WithAuthenticatedHeaders::create(NoContent, user.id)
+    WithAuthenticatedHeaders::create(NoContent, user.username)
 }
 
 #[derive(rocket::Responder)]
@@ -18,10 +18,10 @@ pub struct WithAuthenticatedHeaders<'a, I> {
 }
 
 impl<'a, I> WithAuthenticatedHeaders<'a, I> {
-    pub fn create(inner: I, user_id: String) -> WithAuthenticatedHeaders<'a, I> {
+    pub fn create(inner: I, username: String) -> WithAuthenticatedHeaders<'a, I> {
         WithAuthenticatedHeaders {
             inner,
-            user: Header::new("X-Forcefield-UserId", user_id.clone()),
+            user: Header::new("X-Forcefield-Username", username.clone()),
         }
     }
 }

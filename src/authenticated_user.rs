@@ -7,13 +7,15 @@ use rocket::{
     request::{self, FromRequest},
     time::Duration,
 };
+use serde::{Deserialize, Serialize};
+use time::UtcDateTime;
 
 use crate::config::Config;
 
 const USER_COOKIE: &'static str = "forcefield_user";
 
 pub struct AuthenticatedUser {
-    pub id: String,
+    pub username: String,
 }
 
 #[rocket::async_trait]
@@ -38,21 +40,37 @@ pub struct AuthenticatedUserStore<'a> {
 
 impl<'a> AuthenticatedUserStore<'a> {
     pub fn get_authenticated_user(&self) -> Option<AuthenticatedUser> {
-        self.cookies
+        let cookie = self
+            .cookies
             .get_private(USER_COOKIE)
-            .map(|cookie| AuthenticatedUser {
-                id: cookie.value().to_string(),
-            })
+            .and_then(|cookie| serde_json::from_str::<UserCookie>(cookie.value()).ok())
+            .filter(|cookie| {
+                cookie.issued + self.config.login_cookie_expiration > time::UtcDateTime::now()
+            })?;
+        if cookie.issued + self.config.login_cookie_expiration / 2 < time::UtcDateTime::now() {
+            // Refresh the cookie if < 50% time left
+            self.set_authenticated_user(&cookie.username);
+        }
+        Some(AuthenticatedUser {
+            username: cookie.username,
+        })
     }
 
     pub fn set_authenticated_user(&self, username: &str) {
         self.cookies.add_private(
-            Cookie::build((USER_COOKIE, username.to_string()))
-                .domain(self.config.cookie_domain.clone())
-                .max_age(Duration::hours(1))
-                .http_only(true)
-                .same_site(rocket::http::SameSite::Lax)
-                .build(),
+            Cookie::build((
+                USER_COOKIE,
+                serde_json::to_string(&UserCookie {
+                    username: username.to_owned(),
+                    issued: UtcDateTime::now(),
+                })
+                .expect("Failed to serialize user cookie"),
+            ))
+            .domain(self.config.root_domain.clone())
+            .max_age(self.config.login_cookie_expiration)
+            .http_only(true)
+            .same_site(rocket::http::SameSite::Lax)
+            .build(),
         )
     }
 }
@@ -67,4 +85,10 @@ impl<'r> FromRequest<'r> for AuthenticatedUserStore<'r> {
             config: req.rocket().state::<Config>().expect("Config not loaded"),
         })
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UserCookie {
+    username: String,
+    issued: UtcDateTime,
 }

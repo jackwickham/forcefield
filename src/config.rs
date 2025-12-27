@@ -1,16 +1,25 @@
 use std::fmt;
 
 use argon2::password_hash::PasswordHashString;
+use duration_str::deserialize_duration_time;
 use rocket::{
     http::uri::Absolute,
-    serde::{Deserialize, Deserializer, de::Error},
+    serde::{self, Deserialize, Deserializer, de::Error},
 };
+use time::Duration;
 
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
 pub struct Config<'a> {
     pub public_root: Absolute<'a>,
-    pub cookie_domain: String,
+    pub root_domain: String,
+
+    #[serde(
+        default = "default_cookie_expiration",
+        deserialize_with = "deserialize_duration_time"
+    )]
+    pub login_cookie_expiration: Duration,
+
     pub users: Vec<ConfigUser>,
 }
 
@@ -58,4 +67,8 @@ impl<'a> rocket::serde::de::Visitor<'a> for StrVisitor {
     {
         PasswordHashString::new(&v).map_err(Error::custom)
     }
+}
+
+fn default_cookie_expiration() -> Duration {
+    Duration::days(90)
 }
