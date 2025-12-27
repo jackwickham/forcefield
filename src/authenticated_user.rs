@@ -69,6 +69,7 @@ impl<'a> AuthenticatedUserStore<'a> {
             .max_age(self.config.login_cookie_expiration)
             .http_only(true)
             .same_site(rocket::http::SameSite::Lax)
+            .secure(true)
             .build(),
         )
     }

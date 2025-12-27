@@ -30,7 +30,7 @@ fn index_not_logged_in() -> Redirect {
 
 #[launch]
 fn rocket() -> _ {
-    rocket::build()
+    let mut server = rocket::build()
         .attach(AdHoc::config::<Config>())
         .attach(Template::fairing())
         .mount("/static", FileServer::from("static"))
@@ -43,8 +43,17 @@ fn rocket() -> _ {
                 login::login_redirect_to_logged_in,
                 login::show_login,
                 login::login,
-                login::hash_password
             ],
         )
-        .register("/check-auth", catchers![check_auth::unauthorized])
+        .register("/check-auth", catchers![check_auth::unauthorized]);
+
+    if server
+        .state::<Config>()
+        .expect("Config not yet loaded")
+        .enable_hash_password
+    {
+        server = server.mount("/", routes![login::hash_password]);
+    }
+
+    server
 }

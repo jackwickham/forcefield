@@ -20,6 +20,9 @@ pub struct Config<'a> {
     )]
     pub login_cookie_expiration: Duration,
 
+    #[serde(default)]
+    pub enable_hash_password: bool,
+
     pub users: Vec<ConfigUser>,
 }
 
