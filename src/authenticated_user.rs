@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_authenticated_user_store_get_authenticated_user_not_logged_in() {
-        let client = Client::tracked(rocket()).expect("Not a valid rocket");
+        let client = client();
         let store = AuthenticatedUserStore {
             cookies: &client.cookies(),
             config: &test_config(),

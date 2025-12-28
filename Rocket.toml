@@ -12,3 +12,6 @@ public_root = "http://localhost:8000/"
 root_domain = "localhost"
 login_cookie_expiration = "30d"
 enable_hash_password = true
+users = []
+secret_key = "00000000000000000000000000000000000000000000"
+
