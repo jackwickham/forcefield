@@ -9,7 +9,7 @@ use rocket::{
     fs::FileServer,
     http::Header,
     response::Redirect,
-    shield::{Hsts, Referrer, Shield, XssFilter},
+    shield::{Frame, Hsts, Referrer, Shield, XssFilter},
 };
 use rocket_dyn_templates::{Template, context};
 
@@ -45,13 +45,20 @@ fn rocket() -> _ {
             Shield::default()
                 .enable(XssFilter::Disable)
                 .enable(Hsts::IncludeSubDomains(Duration::days(365)))
-                .enable(Referrer::StrictOriginWhenCrossOrigin),
+                .enable(Referrer::StrictOriginWhenCrossOrigin)
+                .enable(Frame::Deny),
         )
         .attach(AdHoc::on_response("CSP", |_, resp| {
             Box::pin(async move {
                 resp.set_header(Header::new(
                     "Content-Security-Policy",
-                    "default-src 'self'; script-src 'none'",
+                    concat!(
+                        "default-src 'self'; ",
+                        "script-src 'none'; ",
+                        "object-src 'none'; ",
+                        "base-uri 'none'; ",
+                        "frame-ancestors 'none'; ",
+                    ),
                 ));
             })
         }))
