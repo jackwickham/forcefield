@@ -18,6 +18,8 @@ use config::Config;
 use login::LoginError;
 use time::Duration;
 
+use crate::config::get_figment;
+
 #[macro_use]
 extern crate rocket;
 
@@ -37,8 +39,8 @@ fn index_not_logged_in() -> Redirect {
 }
 
 #[launch]
-fn rocket() -> _ {
-    rocket::build()
+pub fn rocket() -> _ {
+    rocket::custom(get_figment(rocket::Config::DEFAULT_PROFILE))
         .attach(AdHoc::config::<Config>())
         .attach(Template::fairing())
         .attach(

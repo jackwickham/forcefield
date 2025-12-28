@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 argon2 = "0.5.3"
 duration-str = "0.18.0"
+figment = { version = "0.10.19", features = ["toml", "test"] }
 rocket = { version = "0.5.1", features = ["secrets"] }
 rocket_dyn_templates = { version = "0.2.0", features = ["tera"] }
 serde = "1.0.228"
