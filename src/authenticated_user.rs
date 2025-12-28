@@ -56,22 +56,29 @@ impl<'a> AuthenticatedUserStore<'a> {
     }
 
     pub fn set_authenticated_user(&self, username: &str) {
-        self.cookies.add_private(
-            Cookie::build((
-                USER_COOKIE,
-                serde_json::to_string(&UserCookie {
-                    username: username.to_owned(),
-                    issued: UtcDateTime::now(),
-                })
-                .expect("Failed to serialize user cookie"),
-            ))
-            .domain(self.config.root_domain.clone())
-            .max_age(self.config.login_cookie_expiration)
-            .http_only(true)
-            .same_site(rocket::http::SameSite::Lax)
-            .secure(true)
-            .build(),
-        )
+        self.cookies.add_private(self.make_cookie(Some(&UserCookie {
+            username: username.to_owned(),
+            issued: UtcDateTime::now(),
+        })))
+    }
+
+    pub fn clear_authenticated_user(&self) {
+        self.cookies.remove_private(self.make_cookie(None));
+    }
+
+    fn make_cookie(&self, value: Option<&UserCookie>) -> Cookie<'static> {
+        Cookie::build((
+            USER_COOKIE,
+            value.map_or("".to_owned(), |val| {
+                serde_json::to_string(val).expect("Failed to serialize user cookie")
+            }),
+        ))
+        .domain(self.config.root_domain.clone())
+        .max_age(self.config.login_cookie_expiration)
+        .http_only(true)
+        .same_site(rocket::http::SameSite::Lax)
+        .secure(true)
+        .build()
     }
 }
 

@@ -78,6 +78,16 @@ pub fn login(
     }
 }
 
+#[rocket::get("/logout?<next>")]
+pub fn logout(
+    next: Option<&str>,
+    config: &State<Config>,
+    authenticated_user_store: AuthenticatedUserStore,
+) -> Redirect {
+    authenticated_user_store.clear_authenticated_user();
+    Redirect::to(get_redirect_uri(next, config))
+}
+
 #[rocket::post("/hash-password", data = "<password>")]
 pub fn hash_password(
     password: &str,
