@@ -31,6 +31,8 @@ pub struct Config<'a> {
     pub public_root: Absolute<'a>,
     pub root_domain: String,
 
+    pub secret_key: String,
+
     #[serde(
         default = "default_cookie_expiration",
         deserialize_with = "deserialize_duration_time"
