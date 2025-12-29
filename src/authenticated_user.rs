@@ -16,21 +16,26 @@ pub struct AuthenticatedUserState {
 
 impl AuthenticatedUserState {
     pub async fn get_authenticated_user(mut self) -> Option<AuthenticatedUser> {
-        let cookie = self
-            .cookies
-            .get(USER_COOKIE)
-            .await
-            .and_then(|cookie| serde_json::from_str::<UserCookie>(cookie.value()).ok())
+        let raw_cookie = self.cookies.get(USER_COOKIE).await?;
+
+        let valid_cookie = serde_json::from_str::<UserCookie>(raw_cookie.value())
+            .ok()
             .filter(|cookie| {
                 cookie.issued + self.state.login_cookie_expiration > time::UtcDateTime::now()
-            })?;
-        if cookie.issued + self.state.login_cookie_expiration / 2 < time::UtcDateTime::now() {
-            // Refresh the cookie if < 50% time left
-            self.set_authenticated_user(&cookie.username).await;
+            });
+        if let Some(cookie) = valid_cookie {
+            if cookie.issued + self.state.login_cookie_expiration / 2 < time::UtcDateTime::now() {
+                // Refresh the cookie if < 50% time left
+                self.set_authenticated_user(&cookie.username).await;
+            }
+            Some(AuthenticatedUser {
+                username: cookie.username,
+            })
+        } else {
+            println!("Cookie was expired or invalid");
+            self.clear_authenticated_user().await;
+            None
         }
-        Some(AuthenticatedUser {
-            username: cookie.username,
-        })
     }
 
     pub async fn set_authenticated_user(&mut self, username: &str) {
@@ -124,4 +129,190 @@ impl FromRequestParts<ForcefieldState> for Option<AuthenticatedUser> {
 struct UserCookie {
     username: String,
     issued: UtcDateTime,
+}
+
+#[cfg(test)]
+mod test {
+    use cookie::Key;
+    use time::macros::datetime;
+
+    use super::*;
+
+    #[test]
+    fn user_cookie_roundtrip() {
+        let original = UserCookie {
+            username: "testuser123".to_string(),
+            issued: datetime!(2024-06-20 15:30:45 UTC).into(),
+        };
+
+        let json = serde_json::to_string(&original).expect("Failed to serialize");
+        let deserialized: UserCookie = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(original.username, deserialized.username);
+        assert_eq!(original.issued, deserialized.issued);
+    }
+
+    #[tokio::test]
+    async fn get_authenticated_user_no_cookie() {
+        let cookies = PrivateCookieJar::create_with_cookies(Key::generate(), vec![]);
+        let state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        assert_eq!(state.get_authenticated_user().await, None);
+        assert_eq!(cookies.get_delta().await, Vec::<Cookie>::new());
+    }
+
+    #[tokio::test]
+    async fn get_authenticated_user_logged_in() {
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            user_cookie("test-user", UtcDateTime::now()),
+        );
+        let state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        assert_eq!(
+            state.get_authenticated_user().await,
+            Some(AuthenticatedUser {
+                username: "test-user".to_owned(),
+            })
+        );
+        assert_eq!(cookies.get_delta().await, Vec::<Cookie>::new());
+    }
+
+    #[tokio::test]
+    async fn get_authenticated_user_refreshes_nearly_expired_cookie() {
+        let state = ForcefieldState::default();
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            user_cookie(
+                "test-user",
+                UtcDateTime::now() - state.login_cookie_expiration / 2,
+            ),
+        );
+        let state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: state,
+        };
+
+        assert_eq!(
+            state.get_authenticated_user().await,
+            Some(AuthenticatedUser {
+                username: "test-user".to_owned(),
+            })
+        );
+        let set_cookies = cookies.get_delta().await;
+        assert_eq!(set_cookies.len(), 1);
+        assert_eq!(set_cookies.first().unwrap().name(), USER_COOKIE);
+        let cookie_val: UserCookie = serde_json::from_str(
+            cookies
+                .decrypt(set_cookies.first().unwrap().clone())
+                .await
+                .expect("Failed to decrypt cookie")
+                .value(),
+        )
+        .expect("Failed to deserialize set cookie");
+        assert_eq!(cookie_val.username, "test-user");
+    }
+
+    #[tokio::test]
+    async fn get_authenticated_user_invalid_cookie() {
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            vec![(USER_COOKIE.to_owned(), "invalid".to_owned())],
+        );
+        let state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        assert_eq!(state.get_authenticated_user().await, None);
+        let set_cookies = cookies.get_delta().await;
+        assert_eq!(set_cookies.len(), 1);
+        assert_eq!(set_cookies.first().unwrap().name(), USER_COOKIE);
+        assert_eq!(set_cookies.first().unwrap().value(), "");
+    }
+
+    #[tokio::test]
+    async fn get_authenticated_user_expired_cookie() {
+        let state = ForcefieldState::default();
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            user_cookie(
+                "test-user",
+                UtcDateTime::now() - state.login_cookie_expiration,
+            ),
+        );
+        let state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        assert_eq!(state.get_authenticated_user().await, None);
+        let set_cookies = cookies.get_delta().await;
+        assert_eq!(set_cookies.len(), 1);
+        assert_eq!(set_cookies.first().unwrap().name(), USER_COOKIE);
+        assert_eq!(set_cookies.first().unwrap().value(), "");
+    }
+
+    #[tokio::test]
+    async fn set_authenticated_user_sets_cookie() {
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            user_cookie("existing-user", UtcDateTime::now()),
+        );
+        let mut state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        state.set_authenticated_user("test-user").await;
+
+        let set_cookies = cookies.get_delta().await;
+        assert_eq!(set_cookies.len(), 1);
+        assert_eq!(set_cookies.first().unwrap().name(), USER_COOKIE);
+        let cookie_val: UserCookie = serde_json::from_str(
+            cookies
+                .decrypt(set_cookies.first().unwrap().clone())
+                .await
+                .expect("Failed to decrypt cookie")
+                .value(),
+        )
+        .expect("Failed to deserialize set cookie");
+        assert_eq!(cookie_val.username, "test-user");
+    }
+
+    #[tokio::test]
+    async fn clear_authenticated_user_clears_cookie() {
+        let cookies = PrivateCookieJar::create_with_cookies(
+            Key::generate(),
+            user_cookie("existing-user", UtcDateTime::now()),
+        );
+        let mut state = AuthenticatedUserState {
+            cookies: cookies.clone(),
+            state: ForcefieldState::default(),
+        };
+
+        state.clear_authenticated_user().await;
+
+        let set_cookies = cookies.get_delta().await;
+        assert_eq!(set_cookies.len(), 1);
+        assert_eq!(set_cookies.first().unwrap().name(), USER_COOKIE);
+        assert_eq!(set_cookies.first().unwrap().value(), "");
+    }
+
+    fn user_cookie(username: &str, issued: UtcDateTime) -> Vec<(String, String)> {
+        vec![(
+            USER_COOKIE.to_owned(),
+            serde_json::to_string(&UserCookie {
+                username: username.to_owned(),
+                issued,
+            })
+            .expect("Failed to serialize test cookie"),
+        )]
+    }
 }

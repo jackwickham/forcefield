@@ -35,3 +35,16 @@ impl ForcefieldState {
         ForcefieldState(Arc::new(state))
     }
 }
+
+#[cfg(test)]
+impl Default for ForcefieldState {
+    fn default() -> Self {
+        Self(Arc::new(InnerForcefieldState {
+            public_root: (),
+            root_domain: "localhost".to_owned(),
+            login_cookie_expiration: Duration::hours(24),
+            cookie_encryption_key: Key::generate(),
+            users: vec![],
+        }))
+    }
+}

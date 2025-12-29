@@ -602,12 +602,14 @@ dependencies = [
  "cookie",
  "duration-str",
  "figment",
+ "percent-encoding",
  "rocket",
  "rocket_dyn_templates",
  "serde",
  "serde_json",
  "time",
  "tokio",
+ "tower",
  "urlencoding",
 ]
 
