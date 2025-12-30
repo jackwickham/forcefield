@@ -31,8 +31,8 @@ impl ForcefieldConfig {
         let s = Config::builder()
             .set_default("login_cookie_expiration", "7d")?
             .set_default("enable_hash_password", false)?
-            .add_source(File::with_name("config.toml"))
-            .add_source(File::with_name("secrets.toml").required(false))
+            .add_source(File::with_name("forcefield.toml"))
+            .add_source(File::with_name("forcefield-secrets.toml").required(false))
             .build()?;
 
         s.try_deserialize()
