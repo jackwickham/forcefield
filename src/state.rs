@@ -1,9 +1,11 @@
-use std::{ops::Deref, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use time::Duration;
 use url::Url;
+
+use crate::config::ConfigUser;
 
 #[derive(Clone)]
 pub struct InnerForcefieldState {
@@ -11,7 +13,7 @@ pub struct InnerForcefieldState {
     pub root_domain: String,
     pub login_cookie_expiration: Duration,
     pub cookie_encryption_key: Key,
-    pub users: Vec<()>,
+    pub users: HashMap<String, ConfigUser>,
 }
 
 #[derive(Clone)]
@@ -46,7 +48,7 @@ impl Default for ForcefieldState {
             root_domain: "localhost".to_owned(),
             login_cookie_expiration: Duration::hours(24),
             cookie_encryption_key: Key::generate(),
-            users: vec![],
+            users: HashMap::new(),
         }))
     }
 }

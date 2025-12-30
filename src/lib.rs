@@ -1,4 +1,7 @@
-use axum::{Router, middleware, routing::get};
+use axum::{
+    Router, middleware,
+    routing::{get, post},
+};
 use axum_extra::extract::cookie::Key;
 use base64::Engine;
 use time::Duration;
@@ -9,6 +12,7 @@ use crate::{
     config::Config,
     cookies::auto_cookie_middleware,
     index::index_handler,
+    login::{hash_password, login, logout, show_login},
     state::{ForcefieldState, InnerForcefieldState},
 };
 
@@ -17,6 +21,7 @@ mod check_auth;
 mod config;
 mod cookies;
 mod index;
+mod login;
 mod state;
 
 pub async fn start_server_with_default_config() -> Result<(), std::io::Error> {
@@ -32,9 +37,16 @@ pub async fn start_server_with_default_config() -> Result<(), std::io::Error> {
 }
 
 pub async fn start_server(config: Config) -> Result<(), std::io::Error> {
-    let app = Router::<ForcefieldState>::new()
+    let mut app_builder = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
         .route("/check-auth", get(check_auth))
+        .route("/login", get(show_login).post(login))
+        .route("/logout", get(logout));
+    if config.enable_hash_password {
+        app_builder = app_builder.route("/hash-password", post(hash_password));
+    }
+
+    let app = app_builder
         .layer(middleware::from_fn(auto_cookie_middleware))
         .with_state(initial_state(config));
 
@@ -55,6 +67,10 @@ fn initial_state(config: Config) -> ForcefieldState {
                 .decode(&config.secret_key)
                 .expect("Failed to deserialize encryption key"),
         ),
-        users: vec![],
+        users: config
+            .users
+            .into_iter()
+            .map(|user| (user.username.clone(), user))
+            .collect(),
     })
 }

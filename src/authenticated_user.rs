@@ -15,6 +15,11 @@ pub struct AuthenticatedUserManager {
 }
 
 impl AuthenticatedUserManager {
+    #[cfg(test)]
+    pub fn new_for_test(cookies: PrivateCookieJar, state: ForcefieldState) -> Self {
+        AuthenticatedUserManager { cookies, state }
+    }
+
     pub async fn get_authenticated_user(mut self) -> Option<AuthenticatedUser> {
         let raw_cookie = self.cookies.get(USER_COOKIE).await?;
 
@@ -67,7 +72,7 @@ impl AuthenticatedUserManager {
         .domain(config.root_domain.clone())
         .max_age(config.login_cookie_expiration)
         .http_only(true)
-        .same_site(cookie::SameSite::Lax) // Fixed: was rocket::http::SameSite
+        .same_site(cookie::SameSite::Lax)
         .secure(true)
         .build()
     }

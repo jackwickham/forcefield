@@ -43,7 +43,7 @@ pub struct Config {
     pub users: Vec<ConfigUser>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigUser {
     pub username: String,
 

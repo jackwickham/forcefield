@@ -2,24 +2,24 @@ use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
     password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
 };
-use rocket::{
-    State,
-    form::Form,
-    http::{ext::IntoOwned, uri::Reference},
-    response::{Redirect, status::Forbidden},
+use askama::Template;
+use axum::{
+    Form,
+    extract::{Query, State},
+    response::{Html, Redirect},
 };
-use rocket_dyn_templates::{Template, context};
+use serde::Deserialize;
+use url::Url;
 
 use crate::{
-    authenticated_user::{AuthenticatedUser, AuthenticatedUserStore},
-    config::{Config, ConfigUser},
+    authenticated_user::{AuthenticatedUser, AuthenticatedUserManager},
+    state::ForcefieldState,
 };
 
 const DUMMY_HASH: &'static str = "$argon2id$v=19$m=19456,t=2,p=1$fKZfiZ9ioXzAPxb6I/IMLQ$EY+FN6zRB5YlFtHumtVWe/eGZUl1pmofDThztZHtL+U";
 
-#[derive(Debug, Clone, Copy, rocket::UriDisplayQuery, rocket::FromFormField)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub enum LoginError {
-    #[field(value = "invalid_credentials")]
     InvalidCredentials,
 }
 
@@ -31,78 +31,80 @@ impl LoginError {
     }
 }
 
-#[rocket::get("/login?<next>", rank = 1)]
-pub fn login_redirect_to_logged_in(
-    next: Option<&str>,
-    config: &State<Config>,
-    _authenticated_user: AuthenticatedUser,
-) -> Redirect {
-    Redirect::to(get_redirect_uri(next, config))
-}
-
-#[rocket::get("/login?<next>&<error>", rank = 2)]
-pub fn show_login(next: Option<&str>, error: Option<LoginError>) -> Template {
-    Template::render(
-        "login",
-        context! {
-            next: next,
-            error: error.map(|e| e.message()),
-        },
-    )
-}
-
-#[rocket::post("/login?<next>", data = "<request>")]
-pub fn login(
-    next: Option<&str>,
-    request: Form<LoginRequest>,
-    config: &State<Config>,
-    authenticated_user_store: AuthenticatedUserStore,
-) -> Redirect {
-    let mut matching_user: Option<&ConfigUser> = None;
-    for user in &config.users {
-        if user.username == request.username {
-            matching_user = Some(user);
+pub async fn show_login(
+    Query(query): Query<LoginQueryParams>,
+    authenticated_user: Option<AuthenticatedUser>,
+    State(state): State<ForcefieldState>,
+) -> Result<Html<String>, Redirect> {
+    match authenticated_user {
+        Some(_) => Err(Redirect::to(get_redirect_uri(query.next, &state).as_str())),
+        None => {
+            let mut submit_url = state
+                .public_root
+                .join("/login")
+                .expect("Failed to construct login URI");
+            if let Some(uri) = query.next {
+                submit_url.query_pairs_mut().append_pair("next", &uri);
+            }
+            Ok(Html(
+                LoginTemplate {
+                    submit_url,
+                    error: query.error,
+                }
+                .render()
+                .expect("Failed to render login template"),
+            ))
         }
     }
+}
+
+pub async fn login(
+    mut authenticated_user_manager: AuthenticatedUserManager,
+    Query(query): Query<LoginQueryParams>,
+    State(state): State<ForcefieldState>,
+    Form(request): Form<LoginRequest>,
+) -> Redirect {
+    let matching_user = state.users.get(&request.username);
 
     if verify_password(
-        request.password,
+        &request.password,
         matching_user.map(|user| &user.password_hash),
     ) && let Some(user) = matching_user
     {
-        authenticated_user_store.set_authenticated_user(&user.username);
-        Redirect::to(get_redirect_uri(next, config))
+        authenticated_user_manager
+            .set_authenticated_user(&user.username)
+            .await;
+        Redirect::to(get_redirect_uri(query.next, &state).as_str())
     } else {
-        let uri = rocket::uri!(show_login(next, Some(LoginError::InvalidCredentials)));
-        Redirect::to(uri)
+        let mut redirect_uri = state
+            .public_root
+            .join("/login")
+            .expect("Failed to construct login URI");
+        if let Some(uri) = query.next {
+            redirect_uri.query_pairs_mut().append_pair("next", &uri);
+        }
+        redirect_uri
+            .query_pairs_mut()
+            .append_pair("error", "InvalidCredentials");
+        Redirect::to(redirect_uri.as_str())
     }
 }
 
-#[rocket::get("/logout?<next>")]
-pub fn logout(
-    next: Option<&str>,
-    config: &State<Config>,
-    authenticated_user_store: AuthenticatedUserStore,
+pub async fn logout(
+    mut authenticated_user_manager: AuthenticatedUserManager,
+    Query(next): Query<Option<String>>,
+    State(state): State<ForcefieldState>,
 ) -> Redirect {
-    authenticated_user_store.clear_authenticated_user();
-    Redirect::to(get_redirect_uri(next, config))
+    authenticated_user_manager.clear_authenticated_user().await;
+    Redirect::to(get_redirect_uri(next, &state).as_str())
 }
 
-#[rocket::post("/hash-password", data = "<password>")]
-pub fn hash_password(
-    password: &str,
-    config: &State<Config>,
-) -> Result<String, Forbidden<&'static str>> {
-    if !config.enable_hash_password {
-        return Err(Forbidden("Endpoint not enabled"));
-    }
-
+pub async fn hash_password(password: String) -> String {
     let a2 = Argon2::default();
     let salt = SaltString::generate(&mut OsRng);
-    Ok(a2
-        .hash_password(password.as_bytes(), &salt)
+    a2.hash_password(password.as_bytes(), &salt)
         .expect("Failed to hash password")
-        .to_string())
+        .to_string()
 }
 
 fn verify_password(password: &str, password_hash: Option<&PasswordHashString>) -> bool {
@@ -120,116 +122,124 @@ fn verify_password(password: &str, password_hash: Option<&PasswordHashString>) -
         .is_some()
 }
 
-fn get_redirect_uri(uri_param: Option<&str>, config: &Config) -> Reference<'static> {
+/// Only allow redirecting to the root domain and its subdomains. Defaults to the forcefield public root otherwise.
+fn get_redirect_uri(uri_param: Option<String>, state: &ForcefieldState) -> Url {
     uri_param
-        .and_then(|uri| Reference::parse(uri).ok())
-        .filter(|uri| {
-            uri.scheme()
-                .is_some_and(|scheme| scheme.eq("http") || scheme.eq("https"))
+        .and_then(|uri| Url::parse(&uri).ok())
+        .filter(|url| url.scheme().eq("http") || url.scheme().eq("https"))
+        .filter(|url| {
+            url.host()
+                .and_then(|host| match host {
+                    url::Host::Domain(val) => Some(val),
+                    _ => None,
+                })
+                .is_some_and(|host| {
+                    host.eq(&state.root_domain)
+                        || host.ends_with(&format!(".{}", state.root_domain))
+                })
         })
-        .filter(|uri| {
-            uri.authority().is_some_and(|authority| {
-                authority.host().eq(&config.root_domain)
-                    || authority
-                        .host()
-                        .ends_with(&format!(".{}", config.root_domain))
-            })
-        })
-        .unwrap_or_else(|| uri!("/").into())
-        .into_owned()
+        .unwrap_or_else(|| state.public_root.clone())
 }
 
-#[derive(rocket::FromForm)]
-pub struct LoginRequest<'a> {
-    username: &'a str,
-    password: &'a str,
+#[derive(Template)]
+#[template(path = "login.html")]
+struct LoginTemplate {
+    submit_url: Url,
+    error: Option<LoginError>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct LoginQueryParams {
+    next: Option<String>,
+    error: Option<LoginError>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LoginRequest {
+    username: String,
+    password: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use argon2::{Argon2, password_hash::{PasswordHashString, SaltString, rand_core::OsRng}};
-    use rocket::State;
-    use rocket::http::uri::Absolute;
-    use rocket::http::{Status, ContentType};
-    use rocket::local::blocking::Client;
+    use std::collections::HashMap;
 
-    const USER_COOKIE: &str = "forcefield_user";
+    use argon2::{
+        Argon2,
+        password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
+    };
+    use axum::{extract::State, http::header::LOCATION, response::IntoResponse};
+    use cookie::Key;
 
-    fn test_config() -> Config<'static> {
-        Config {
-            public_root: Absolute::parse("https://example.com").unwrap(),
-            root_domain: "example.com".to_string(),
-            login_cookie_expiration: time::Duration::days(90),
-            enable_hash_password: true,
-            users: vec![],
-        }
+    use crate::{
+        authenticated_user::AuthenticatedUserManager,
+        config::ConfigUser,
+        cookies::PrivateCookieJar,
+        state::{ForcefieldState, InnerForcefieldState},
+    };
+
+    fn test_state() -> ForcefieldState {
+        ForcefieldState::default()
     }
 
-    fn test_config_with_user() -> Config<'static> {
-        // Generate hash for "testpassword"
+    fn test_state_with_domain(public_root: &str, root_domain: &str) -> ForcefieldState {
+        ForcefieldState::new(InnerForcefieldState {
+            public_root: Url::parse(public_root).expect("Failed to parse public root"),
+            root_domain: root_domain.to_owned(),
+            login_cookie_expiration: time::Duration::hours(24),
+            cookie_encryption_key: Key::generate(),
+            users: HashMap::new(),
+        })
+    }
+
+    fn test_state_with_user(username: &str, password: &str) -> ForcefieldState {
         let password_hash = Argon2::default()
-            .hash_password("testpassword".as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
             .expect("Failed to hash password")
             .to_string();
         let password_hash = PasswordHashString::new(&password_hash).expect("Invalid hash");
 
-        Config {
-            public_root: Absolute::parse("https://example.com").unwrap(),
-            root_domain: "example.com".to_string(),
-            login_cookie_expiration: time::Duration::days(90),
-            enable_hash_password: true,
-            users: vec![ConfigUser {
-                username: "testuser".to_string(),
+        let mut users = HashMap::new();
+        users.insert(
+            username.to_owned(),
+            ConfigUser {
+                username: username.to_owned(),
                 password_hash,
-            }],
-        }
+            },
+        );
+
+        ForcefieldState::new(InnerForcefieldState {
+            public_root: Url::parse("https://example.com").expect("Failed to parse public root"),
+            root_domain: "example.com".to_owned(),
+            login_cookie_expiration: time::Duration::days(90),
+            cookie_encryption_key: Key::generate(),
+            users,
+        })
     }
 
-    fn client_with_user() -> Client {
-        let rocket = rocket::build()
-            .manage(test_config_with_user())
-            .attach(Template::fairing())
-            .mount(
-                "/",
-                routes![
-                    login_redirect_to_logged_in,
-                    show_login,
-                    login,
-                    logout,
-                    hash_password
-                ],
-            );
-        Client::tracked(rocket).expect("Failed to create client")
-    }
-
-    #[test]
-    fn test_hash_password_fails_when_disabled() {
-        let mut config = test_config();
-        config.enable_hash_password = false;
+    #[tokio::test]
+    async fn test_hash_password_produces_valid_hash() {
         let password = "test_password_123";
-        let result = hash_password(password, &State::from(&config));
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_verify_password_with_correct_password() {
-        let config = test_config();
-        let password = "test_password_123";
-        let hash =
-            hash_password(password, &State::from(&config)).expect("Hash password should succeed");
+        let hash = hash_password(password.to_owned()).await;
         let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
 
         assert!(verify_password(password, Some(&hash_string)));
     }
 
-    #[test]
-    fn test_verify_password_with_incorrect_password() {
-        let config = test_config();
+    #[tokio::test]
+    async fn test_verify_password_with_correct_password() {
         let password = "test_password_123";
-        let hash =
-            hash_password(password, &State::from(&config)).expect("Hash password should succeed");
+        let hash = hash_password(password.to_owned()).await;
+        let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
+
+        assert!(verify_password(password, Some(&hash_string)));
+    }
+
+    #[tokio::test]
+    async fn test_verify_password_with_incorrect_password() {
+        let password = "test_password_123";
+        let hash = hash_password(password.to_owned()).await;
         let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
 
         assert!(!verify_password("wrong_password", Some(&hash_string)));
@@ -242,296 +252,370 @@ mod tests {
 
     #[test]
     fn test_get_redirect_uri_with_none() {
-        let config = test_config();
-        let uri = get_redirect_uri(None, &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(None, &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
     #[test]
     fn test_get_redirect_uri_with_valid_same_domain() {
-        let config = test_config();
-        let uri = get_redirect_uri(Some("https://example.com/dashboard"), &config);
-        assert_eq!(uri.to_string(), "https://example.com/dashboard");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("https://example.com/dashboard".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/dashboard");
     }
 
     #[test]
     fn test_get_redirect_uri_with_subdomain() {
-        let config = test_config();
-        let uri = get_redirect_uri(Some("https://app.example.com/dashboard"), &config);
-        assert_eq!(uri.to_string(), "https://app.example.com/dashboard");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("https://app.example.com/dashboard".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://app.example.com/dashboard");
     }
 
     #[test]
     fn test_get_redirect_uri_with_different_domain_rejects() {
-        let config = test_config();
-        // Should reject different domain and return default /
-        let uri = get_redirect_uri(Some("https://evil.com/phishing"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("https://evil.com/phishing".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
     #[test]
     fn test_get_redirect_uri_with_invalid_uri() {
-        let config = test_config();
-        // Invalid URI should fall back to /
-        let uri = get_redirect_uri(Some("not a valid uri!!!"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("not a valid uri!!!".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
     #[test]
     fn test_get_redirect_uri_with_path_only_rejects() {
-        let config = test_config();
-        // Path-only URIs don't have scheme, should fall back to /
-        let uri = get_redirect_uri(Some("/dashboard"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("/dashboard".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
     #[test]
     fn test_get_redirect_uri_without_scheme_rejects() {
-        let config = test_config();
-        // URIs without scheme should be rejected
-        let uri = get_redirect_uri(Some("//example.com/dashboard"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(Some("//example.com/dashboard".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
     #[test]
     fn test_get_redirect_uri_with_query_params() {
-        let config = test_config();
-        let uri = get_redirect_uri(Some("https://example.com/page?foo=bar&baz=qux"), &config);
-        assert_eq!(uri.to_string(), "https://example.com/page?foo=bar&baz=qux");
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let uri = get_redirect_uri(
+            Some("https://example.com/page?foo=bar&baz=qux".to_owned()),
+            &state,
+        );
+        assert_eq!(uri.as_str(), "https://example.com/page?foo=bar&baz=qux");
     }
 
     #[test]
     fn test_get_redirect_uri_rejects_non_http_schemes() {
-        let config = test_config();
-        // Should reject javascript: and other dangerous schemes
-        let uri = get_redirect_uri(Some("javascript:alert(1)"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let state = test_state_with_domain("https://example.com", "example.com");
 
-        let uri = get_redirect_uri(Some("data:text/html,<script>alert(1)</script>"), &config);
-        assert_eq!(uri.to_string(), "/");
+        let uri = get_redirect_uri(Some("javascript:alert(1)".to_owned()), &state);
+        assert_eq!(uri.as_str(), "https://example.com/");
+
+        let uri = get_redirect_uri(
+            Some("data:text/html,<script>alert(1)</script>".to_owned()),
+            &state,
+        );
+        assert_eq!(uri.as_str(), "https://example.com/");
     }
 
-    // Endpoint integration tests
+    #[tokio::test]
+    async fn test_show_login_renders_when_not_authenticated() {
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let result = show_login(Query(LoginQueryParams::default()), None, State(state)).await;
 
-    #[test]
-    fn test_login_endpoint_with_valid_credentials() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
+        let html = result.expect("Should return Ok with HTML");
+        assert!(
+            html.0.contains("type=\"password\""),
+            "Should render login template"
+        );
+    }
 
-        // Should redirect to root
-        assert_eq!(response.status(), Status::SeeOther);
+    #[tokio::test]
+    async fn test_show_login_redirects_when_authenticated() {
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let user = AuthenticatedUser {
+            username: "testuser".to_owned(),
+        };
+        let result = show_login(Query(LoginQueryParams::default()), Some(user), State(state)).await;
+
+        let redirect = result.expect_err("Should return Err with Redirect");
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
         assert_eq!(
-            response.headers().get_one("Location"),
-            Some("/")
+            response
+                .headers()
+                .get(LOCATION)
+                .expect("Location header not present")
+                .to_str()
+                .expect("Failed to convert location header to string"),
+            "https://example.com/"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_show_login_redirects_to_next_when_authenticated() {
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let user = AuthenticatedUser {
+            username: "testuser".to_owned(),
+        };
+        let result = show_login(
+            Query(LoginQueryParams {
+                next: Some("https://dashboard.example.com/dashboard".to_owned()),
+                error: None,
+            }),
+            Some(user),
+            State(state),
+        )
+        .await;
+
+        let redirect = result.expect_err("Should return Err with Redirect");
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            response
+                .headers()
+                .get(LOCATION)
+                .expect("Location header not present")
+                .to_str()
+                .expect("Failed to convert location header to string"),
+            "https://dashboard.example.com/dashboard"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_with_valid_credentials() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
+
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams::default()),
+            State(state),
+            Form(LoginRequest {
+                username: "testuser".to_owned(),
+                password: "testpassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get("location").map(|h| h.to_str().ok()),
+            Some(Some("https://example.com/"))
         );
 
-        // Should set authentication cookie
-        let cookie = response.cookies().get_private(USER_COOKIE);
-        assert!(cookie.is_some(), "Authentication cookie should be set");
+        let delta = cookies.get_delta().await;
+        assert_eq!(delta.len(), 1, "Should set authentication cookie");
     }
 
-    #[test]
-    fn test_login_endpoint_with_invalid_password() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=wrongpassword")
-            .dispatch();
+    #[tokio::test]
+    async fn test_login_with_invalid_password() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
 
-        // Should redirect to login page with error
-        assert_eq!(response.status(), Status::SeeOther);
-        let location = response.headers().get_one("Location").unwrap();
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams::default()),
+            State(state),
+            Form(LoginRequest {
+                username: "testuser".to_owned(),
+                password: "wrongpassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|h| h.to_str().ok())
+            .expect("Should have location header");
+        assert!(location.contains("/login"), "Should redirect to login page");
+        assert!(
+            location.contains("error=InvalidCredentials"),
+            "Should include error param"
+        );
+
+        let delta = cookies.get_delta().await;
+        assert!(delta.is_empty(), "Should not set authentication cookie");
+    }
+
+    #[tokio::test]
+    async fn test_login_with_nonexistent_user() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
+
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams::default()),
+            State(state),
+            Form(LoginRequest {
+                username: "nonexistent".to_owned(),
+                password: "anypassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|h| h.to_str().ok())
+            .expect("Should have location header");
         assert!(location.contains("/login"));
-        assert!(location.contains("error=invalid_credentials"));
+        assert!(location.contains("error=InvalidCredentials"));
 
-        // Should NOT set authentication cookie
-        let cookie = response.cookies().get_private(USER_COOKIE);
-        assert!(cookie.is_none(), "Authentication cookie should not be set");
+        let delta = cookies.get_delta().await;
+        assert!(delta.is_empty(), "Should not set authentication cookie");
     }
 
-    #[test]
-    fn test_login_endpoint_with_nonexistent_user() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=nonexistent&password=anypassword")
-            .dispatch();
+    #[tokio::test]
+    async fn test_login_redirects_to_next_parameter() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
 
-        // Should redirect to login page with error
-        assert_eq!(response.status(), Status::SeeOther);
-        let location = response.headers().get_one("Location").unwrap();
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams {
+                next: Some("https://example.com/dashboard".to_owned()),
+                error: None,
+            }),
+            State(state),
+            Form(LoginRequest {
+                username: "testuser".to_owned(),
+                password: "testpassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get("location").map(|h| h.to_str().ok()),
+            Some(Some("https://example.com/dashboard"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_rejects_malicious_next_parameter() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
+
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams {
+                next: Some("https://evil.com/phishing".to_owned()),
+                error: None,
+            }),
+            State(state),
+            Form(LoginRequest {
+                username: "testuser".to_owned(),
+                password: "testpassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.headers().get("location").map(|h| h.to_str().ok()),
+            Some(Some("https://example.com/"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_login_failure_preserves_next_parameter() {
+        let state = test_state_with_user("testuser", "testpassword");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
+
+        let redirect = login(
+            manager,
+            Query(LoginQueryParams {
+                next: Some("https://example.com/dashboard".to_owned()),
+                error: None,
+            }),
+            State(state),
+            Form(LoginRequest {
+                username: "testuser".to_owned(),
+                password: "wrongpassword".to_owned(),
+            }),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|h| h.to_str().ok())
+            .expect("Should have location header");
         assert!(location.contains("/login"));
-        assert!(location.contains("error=invalid_credentials"));
-
-        // Should NOT set authentication cookie
-        let cookie = response.cookies().get_private(USER_COOKIE);
-        assert!(cookie.is_none(), "Authentication cookie should not be set");
+        assert!(location.contains("error=InvalidCredentials"));
+        assert!(location.contains("next="));
     }
 
-    #[test]
-    fn test_login_endpoint_redirects_to_next_parameter() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(Some("https://example.com/dashboard"))))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
-
-        // Should redirect to the next URL
-        assert_eq!(response.status(), Status::SeeOther);
-        assert_eq!(
-            response.headers().get_one("Location"),
-            Some("https://example.com/dashboard")
+    #[tokio::test]
+    async fn test_logout_clears_authentication() {
+        let state = test_state();
+        // Start with an existing auth cookie
+        let cookies = PrivateCookieJar::create_with_cookies(
+            state.cookie_encryption_key.clone(),
+            vec![(
+                "forcefield_user".to_owned(),
+                r#"{"username":"testuser","issued":"2024-06-20T15:30:45Z"}"#.to_owned(),
+            )],
         );
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
+
+        let redirect = logout(manager, Query(None), State(state)).await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+
+        // Verify cookie removal was attempted
+        let delta = cookies.get_delta().await;
+        assert_eq!(delta.len(), 1, "Should clear authentication cookie");
+        assert_eq!(delta[0].value(), "", "Cookie value should be empty");
     }
 
-    #[test]
-    fn test_login_endpoint_rejects_malicious_next_parameter() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(Some("https://evil.com/phishing"))))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
+    #[tokio::test]
+    async fn test_logout_respects_next_parameter() {
+        let state = test_state_with_domain("https://example.com", "example.com");
+        let cookies =
+            PrivateCookieJar::create_with_cookies(state.cookie_encryption_key.clone(), vec![]);
+        let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
 
-        // Should redirect to root, not the malicious URL
-        assert_eq!(response.status(), Status::SeeOther);
+        let redirect = logout(
+            manager,
+            Query(Some("https://example.com/goodbye".to_owned())),
+            State(state),
+        )
+        .await;
+
+        let response = redirect.into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
         assert_eq!(
-            response.headers().get_one("Location"),
-            Some("/")
+            response.headers().get("location").map(|h| h.to_str().ok()),
+            Some(Some("https://example.com/goodbye"))
         );
-    }
-
-    #[test]
-    fn test_login_redirect_to_logged_in_when_already_authenticated() {
-        let client = client_with_user();
-
-        // First, log in
-        let login_response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
-        assert_eq!(login_response.status(), Status::SeeOther);
-
-        // Now try to access the login page while authenticated
-        let response = client.get(uri!(login_redirect_to_logged_in(None::<&str>))).dispatch();
-
-        // Should redirect away from login page
-        assert_eq!(response.status(), Status::SeeOther);
-        assert_eq!(response.headers().get_one("Location"), Some("/"));
-    }
-
-    #[test]
-    fn test_login_redirect_respects_next_parameter_when_authenticated() {
-        let client = client_with_user();
-
-        // First, log in
-        let login_response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
-        assert_eq!(login_response.status(), Status::SeeOther);
-
-        // Try to access login page with next parameter
-        let response = client
-            .get(uri!(login_redirect_to_logged_in(Some("https://example.com/dashboard"))))
-            .dispatch();
-
-        // Should redirect to next parameter
-        assert_eq!(response.status(), Status::SeeOther);
-        assert_eq!(
-            response.headers().get_one("Location"),
-            Some("https://example.com/dashboard")
-        );
-    }
-
-    #[test]
-    fn test_logout_endpoint_clears_authentication() {
-        let client = client_with_user();
-
-        // First, log in
-        let login_response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
-        assert_eq!(login_response.status(), Status::SeeOther);
-        assert!(login_response.cookies().get_private(USER_COOKIE).is_some());
-
-        // Now log out
-        let logout_response = client.get(uri!(logout(None::<&str>))).dispatch();
-
-        // Should redirect to root
-        assert_eq!(logout_response.status(), Status::SeeOther);
-        assert_eq!(logout_response.headers().get_one("Location"), Some("/"));
-
-        // Verify user is actually logged out by attempting to access login redirect endpoint
-        // This endpoint only matches for authenticated users (rank 1)
-        let check_response = client.get(uri!(login_redirect_to_logged_in(None::<&str>))).dispatch();
-
-        // Should show the login page (rank 2) instead of redirecting (rank 1)
-        assert_eq!(check_response.status(), Status::Ok);
-        assert_eq!(check_response.content_type(), Some(ContentType::HTML));
-    }
-
-    #[test]
-    fn test_logout_endpoint_respects_next_parameter() {
-        let client = client_with_user();
-
-        // First, log in
-        let login_response = client
-            .post(uri!(login(None::<&str>)))
-            .header(ContentType::Form)
-            .body("username=testuser&password=testpassword")
-            .dispatch();
-        assert_eq!(login_response.status(), Status::SeeOther);
-
-        // Log out with next parameter
-        let logout_response = client
-            .get(uri!(logout(Some("https://example.com/goodbye"))))
-            .dispatch();
-
-        // Should redirect to next parameter
-        assert_eq!(logout_response.status(), Status::SeeOther);
-        assert_eq!(
-            logout_response.headers().get_one("Location"),
-            Some("https://example.com/goodbye")
-        );
-    }
-
-    #[test]
-    fn test_show_login_renders_without_error() {
-        let client = client_with_user();
-        let response = client.get(uri!(show_login(None::<&str>, None::<LoginError>))).dispatch();
-
-        assert_eq!(response.status(), Status::Ok);
-        // Template should be rendered (check content type)
-        assert_eq!(response.content_type(), Some(ContentType::HTML));
-    }
-
-    #[test]
-    fn test_login_failure_preserves_next_parameter_in_redirect() {
-        let client = client_with_user();
-        let response = client
-            .post(uri!(login(Some("https://example.com/dashboard"))))
-            .header(ContentType::Form)
-            .body("username=testuser&password=wrongpassword")
-            .dispatch();
-
-        // Should redirect to login page with both error and next parameter
-        assert_eq!(response.status(), Status::SeeOther);
-        let location = response.headers().get_one("Location").unwrap();
-        assert!(location.contains("/login"), "Location should be login page");
-        assert!(location.contains("error=invalid_credentials"), "Location should contain error");
-        assert!(location.contains("next="), "Location should preserve next parameter");
-        assert!(location.contains("example.com"), "Location should contain the redirect domain");
     }
 }
