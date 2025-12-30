@@ -8,6 +8,7 @@ use axum::{
 use crate::{authenticated_user::AuthenticatedUser, state::ForcefieldState};
 
 const AUTHENTICATED_USERNAME_HEADER: HeaderName = HeaderName::from_static("x-forcefield-username");
+const FORWARDED_HOST_HEADER: HeaderName = HeaderName::from_static("x-forwarded-host");
 const FORWARDED_URI_HEADER: HeaderName = HeaderName::from_static("x-forwarded-uri");
 
 pub async fn check_auth(
@@ -28,11 +29,17 @@ pub async fn check_auth(
                 .public_root
                 .join("/login")
                 .expect("Failed to generate login URI");
-            if let Some(return_uri) = headers
-                .get(FORWARDED_URI_HEADER)
-                .and_then(|uri| uri.to_str().ok())
-            {
-                redirect.query_pairs_mut().append_pair("next", return_uri);
+            if let (Some(return_host), Some(return_uri)) = (
+                headers
+                    .get(FORWARDED_HOST_HEADER)
+                    .and_then(|uri| uri.to_str().ok()),
+                headers
+                    .get(FORWARDED_URI_HEADER)
+                    .and_then(|uri| uri.to_str().ok()),
+            ) {
+                redirect
+                    .query_pairs_mut()
+                    .append_pair("next", &format!("https://{}{}", return_host, return_uri));
             }
             Redirect::to(redirect.as_str())
         })
@@ -86,8 +93,12 @@ mod test {
     async fn redirects_with_from_when_not_authenticated() {
         let mut request_headers = HeaderMap::new();
         request_headers.append(
+            FORWARDED_HOST_HEADER,
+            HeaderValue::from_static("example.org"),
+        );
+        request_headers.append(
             FORWARDED_URI_HEADER,
-            HeaderValue::from_static("https://example.org/foo?bar=baz"),
+            HeaderValue::from_static("/foo?bar=baz"),
         );
         let response = check_auth(None, request_headers, State(ForcefieldState::default()))
             .await

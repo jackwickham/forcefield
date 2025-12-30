@@ -184,9 +184,10 @@ async fn check_auth_returns_ok_when_logged_in() {
             Request::builder()
                 .uri("/check-auth")
                 .header(
-                    "X-Forwarded-Uri",
-                    HeaderValue::from_static("https://dashboard.example.com/test?foo=bar"),
+                    "X-Forwarded-Host",
+                    HeaderValue::from_static("dashboard.example.com"),
                 )
+                .header("X-Forwarded-Uri", HeaderValue::from_static("/test?foo=bar"))
                 .header(COOKIE, to_cookie_header(&jar))
                 .body(Body::empty())
                 .unwrap(),
@@ -211,9 +212,10 @@ async fn check_auth_redirects_when_not_logged_in() {
             Request::builder()
                 .uri("/check-auth")
                 .header(
-                    "X-Forwarded-Uri",
-                    HeaderValue::from_static("https://dashboard.example.com/foo?bar=baz"),
+                    "X-Forwarded-Host",
+                    HeaderValue::from_static("dashboard.example.com"),
                 )
+                .header("X-Forwarded-Uri", HeaderValue::from_static("/test?foo=bar"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -224,7 +226,7 @@ async fn check_auth_redirects_when_not_logged_in() {
     assert_eq!(
         check_auth_response.headers().get(LOCATION),
         Some(&HeaderValue::from_static(
-            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz"
+            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ftest%3Ffoo%3Dbar"
         ))
     );
     assert_eq!(
@@ -262,9 +264,10 @@ async fn check_auth_redirects_when_invalid_cookie() {
             Request::builder()
                 .uri("/check-auth")
                 .header(
-                    "X-Forwarded-Uri",
-                    HeaderValue::from_static("https://dashboard.example.com/test?foo=bar"),
+                    "X-Forwarded-Host",
+                    HeaderValue::from_static("dashboard.example.com"),
                 )
+                .header("X-Forwarded-Uri", HeaderValue::from_static("/test?foo=bar"))
                 .header(COOKIE, to_cookie_header(&jar))
                 .body(Body::empty())
                 .unwrap(),
@@ -309,9 +312,10 @@ async fn check_auth_refreshes_cookie_when_nearly_expired() {
             Request::builder()
                 .uri("/check-auth")
                 .header(
-                    "X-Forwarded-Uri",
-                    HeaderValue::from_static("https://dashboard.example.com/test?foo=bar"),
+                    "X-Forwarded-Host",
+                    HeaderValue::from_static("dashboard.example.com"),
                 )
+                .header("X-Forwarded-Uri", HeaderValue::from_static("/test?foo=bar"))
                 .header(COOKIE, to_cookie_header(&jar))
                 .body(Body::empty())
                 .unwrap(),
@@ -371,9 +375,10 @@ async fn check_auth_redirects_when_login_expired() {
             Request::builder()
                 .uri("/check-auth")
                 .header(
-                    "X-Forwarded-Uri",
-                    HeaderValue::from_static("https://dashboard.example.com/foo?bar=baz"),
+                    "X-Forwarded-Host",
+                    HeaderValue::from_static("dashboard.example.com"),
                 )
+                .header("X-Forwarded-Uri", HeaderValue::from_static("/test?foo=bar"))
                 .header(COOKIE, to_cookie_header(&jar))
                 .body(Body::empty())
                 .unwrap(),
@@ -385,7 +390,7 @@ async fn check_auth_redirects_when_login_expired() {
     assert_eq!(
         check_auth_response.headers().get(LOCATION),
         Some(&HeaderValue::from_static(
-            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz"
+            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ftest%3Ffoo%3Dbar"
         ))
     );
     assert_eq!(
