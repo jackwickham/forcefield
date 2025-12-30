@@ -9,12 +9,12 @@ use crate::{cookies::PrivateCookieJar, state::ForcefieldState};
 
 const USER_COOKIE: &'static str = "forcefield_user";
 
-pub struct AuthenticatedUserState {
+pub struct AuthenticatedUserManager {
     cookies: PrivateCookieJar,
     state: ForcefieldState,
 }
 
-impl AuthenticatedUserState {
+impl AuthenticatedUserManager {
     pub async fn get_authenticated_user(mut self) -> Option<AuthenticatedUser> {
         let raw_cookie = self.cookies.get(USER_COOKIE).await?;
 
@@ -41,7 +41,7 @@ impl AuthenticatedUserState {
     pub async fn set_authenticated_user(&mut self, username: &str) {
         assert!(username.len() > 0, "Username cannot be blank");
         self.cookies
-            .add(AuthenticatedUserState::make_cookie(
+            .add(AuthenticatedUserManager::make_cookie(
                 Some(&UserCookie {
                     username: username.to_owned(),
                     issued: UtcDateTime::now(),
@@ -53,7 +53,7 @@ impl AuthenticatedUserState {
 
     pub async fn clear_authenticated_user(&mut self) {
         self.cookies
-            .remove(AuthenticatedUserState::make_cookie(None, &self.state))
+            .remove(AuthenticatedUserManager::make_cookie(None, &self.state))
             .await;
     }
 
@@ -73,7 +73,7 @@ impl AuthenticatedUserState {
     }
 }
 
-impl FromRequestParts<ForcefieldState> for AuthenticatedUserState {
+impl FromRequestParts<ForcefieldState> for AuthenticatedUserManager {
     type Rejection = Infallible;
 
     async fn from_request_parts(
@@ -81,7 +81,7 @@ impl FromRequestParts<ForcefieldState> for AuthenticatedUserState {
         state: &ForcefieldState,
     ) -> Result<Self, Infallible> {
         let cookie_jar = PrivateCookieJar::from_request_parts(parts, state).await?;
-        Ok(AuthenticatedUserState {
+        Ok(AuthenticatedUserManager {
             cookies: cookie_jar,
             state: state.clone(),
         })
@@ -100,9 +100,9 @@ impl FromRequestParts<ForcefieldState> for AuthenticatedUser {
         parts: &mut axum::http::request::Parts,
         state: &ForcefieldState,
     ) -> Result<Self, Self::Rejection> {
-        let auth_state = AuthenticatedUserState::from_request_parts(parts, state)
+        let auth_state = AuthenticatedUserManager::from_request_parts(parts, state)
             .await
-            .expect("Failed to create AuthenticatedUserState");
+            .expect("Failed to create AuthenticatedUserManager");
 
         auth_state
             .get_authenticated_user()
@@ -155,7 +155,7 @@ mod test {
     #[tokio::test]
     async fn get_authenticated_user_no_cookie() {
         let cookies = PrivateCookieJar::create_with_cookies(Key::generate(), vec![]);
-        let state = AuthenticatedUserState {
+        let state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
@@ -170,7 +170,7 @@ mod test {
             Key::generate(),
             user_cookie("test-user", UtcDateTime::now()),
         );
-        let state = AuthenticatedUserState {
+        let state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
@@ -194,7 +194,7 @@ mod test {
                 UtcDateTime::now() - state.login_cookie_expiration / 2,
             ),
         );
-        let state = AuthenticatedUserState {
+        let state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: state,
         };
@@ -225,7 +225,7 @@ mod test {
             Key::generate(),
             vec![(USER_COOKIE.to_owned(), "invalid".to_owned())],
         );
-        let state = AuthenticatedUserState {
+        let state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
@@ -247,7 +247,7 @@ mod test {
                 UtcDateTime::now() - state.login_cookie_expiration,
             ),
         );
-        let state = AuthenticatedUserState {
+        let state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
@@ -265,7 +265,7 @@ mod test {
             Key::generate(),
             user_cookie("existing-user", UtcDateTime::now()),
         );
-        let mut state = AuthenticatedUserState {
+        let mut state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
@@ -292,7 +292,7 @@ mod test {
             Key::generate(),
             user_cookie("existing-user", UtcDateTime::now()),
         );
-        let mut state = AuthenticatedUserState {
+        let mut state = AuthenticatedUserManager {
             cookies: cookies.clone(),
             state: ForcefieldState::default(),
         };
