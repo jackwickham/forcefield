@@ -23,19 +23,26 @@ use crate::{
     state::ForcefieldState,
 };
 
+pub mod config;
+
 mod authenticated_user;
 mod check_auth;
-mod config;
 mod cookies;
 mod index;
 mod login;
 mod state;
 
 pub async fn start_server() -> Result<()> {
-    start_server_with_config(ForcefieldConfig::load()?).await
+    let config = ForcefieldConfig::load()?;
+    let app = create_app(config);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
+        .await
+        .expect("Failed to start listening on 0.0.0.0:8000");
+    println!("Listening on 0.0.0.0:8000");
+    Ok(axum::serve(listener, app).await?)
 }
 
-async fn start_server_with_config(config: ForcefieldConfig) -> Result<()> {
+pub fn create_app(config: ForcefieldConfig) -> Router<()> {
     let mut app_builder = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
         .route("/check-auth", get(check_auth))
@@ -46,20 +53,14 @@ async fn start_server_with_config(config: ForcefieldConfig) -> Result<()> {
         app_builder = app_builder.route("/hash-password", post(hash_password));
     }
 
-    let app = app_builder
+    app_builder
         .layer(middleware::from_fn(auto_cookie_middleware))
         .layer(middleware::from_fn(response_headers_middleware))
         .with_state(
             config
                 .try_into()
                 .expect("Failed to convert config to state"),
-        );
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
-        .await
-        .expect("Failed to start listening on 0.0.0.0:8000");
-    println!("Listening on 0.0.0.0:8000");
-    Ok(axum::serve(listener, app).await?)
+        )
 }
 
 async fn response_headers_middleware(req: Request, next: Next) -> Response<Body> {
