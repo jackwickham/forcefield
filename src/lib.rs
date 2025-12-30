@@ -1,10 +1,11 @@
 use axum::{Router, middleware, routing::get};
 use axum_extra::extract::cookie::Key;
 use base64::Engine;
-use rocket::http::uri::Absolute;
 use time::Duration;
+use url::Url;
 
 use crate::{
+    check_auth::check_auth,
     config::Config,
     cookies::auto_cookie_middleware,
     index::index_handler,
@@ -12,6 +13,7 @@ use crate::{
 };
 
 mod authenticated_user;
+mod check_auth;
 mod config;
 mod cookies;
 mod index;
@@ -19,9 +21,9 @@ mod state;
 
 pub async fn start_server_with_default_config() -> Result<(), std::io::Error> {
     start_server(Config {
-        public_root: Absolute::parse("http://localhost:8000").unwrap(),
+        public_root: Url::parse("http://localhost:8000").expect("Failed to parse root URL"),
         root_domain: "localhost".to_owned(),
-        secret_key: "00000000000000000000000000000000000000000000".to_owned(),
+        secret_key: "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_owned(),
         login_cookie_expiration: Duration::hours(1),
         enable_hash_password: true,
         users: vec![],
@@ -29,9 +31,10 @@ pub async fn start_server_with_default_config() -> Result<(), std::io::Error> {
     .await
 }
 
-pub async fn start_server(config: Config<'_>) -> Result<(), std::io::Error> {
+pub async fn start_server(config: Config) -> Result<(), std::io::Error> {
     let app = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
+        .route("/check-auth", get(check_auth))
         .layer(middleware::from_fn(auto_cookie_middleware))
         .with_state(initial_state(config));
 
@@ -42,12 +45,12 @@ pub async fn start_server(config: Config<'_>) -> Result<(), std::io::Error> {
     axum::serve(listener, app).await
 }
 
-fn initial_state(config: Config<'_>) -> ForcefieldState {
+fn initial_state(config: Config) -> ForcefieldState {
     ForcefieldState::new(InnerForcefieldState {
-        public_root: (),
+        public_root: config.public_root,
         root_domain: config.root_domain,
         login_cookie_expiration: config.login_cookie_expiration,
-        cookie_encryption_key: Key::derive_from(
+        cookie_encryption_key: Key::from(
             &base64::prelude::BASE64_STANDARD
                 .decode(&config.secret_key)
                 .expect("Failed to deserialize encryption key"),

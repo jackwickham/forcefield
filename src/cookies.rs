@@ -168,7 +168,6 @@ mod test {
 
     use axum::http::{HeaderMap, HeaderValue, header::COOKIE};
     use percent_encoding::percent_decode_str;
-    use rocket::futures;
     use time::Duration;
 
     // The cookie name is added as additional data in the encrypted value, so the value is only valid with that specific cookie
@@ -192,7 +191,7 @@ mod test {
             HeaderValue::from_str(&format!("baz={}", ENCRYPTED_BAZ_GAMMA))
                 .expect("Failed to parse header"),
         );
-        let jar = PrivateCookieJar::from_headers(&headers, Key::derive_from(&[0; 32]));
+        let jar = PrivateCookieJar::from_headers(&headers, Key::from(&[0; 64]));
 
         assert_eq!(jar.get_delta().await, Vec::<Cookie>::new());
         assert_eq!(jar.get("foo").await, Some(Cookie::new("foo", "alpha")));
@@ -211,7 +210,7 @@ mod test {
             ))
             .expect("Failed to parse header"),
         );
-        let mut jar = PrivateCookieJar::from_headers(&req_headers, Key::derive_from(&[0; 32]));
+        let mut jar = PrivateCookieJar::from_headers(&req_headers, Key::from(&[0; 64]));
 
         jar.add(("foo", "delta")).await;
         jar.add(("baz", "epsilon")).await;
@@ -268,7 +267,7 @@ mod test {
             ))
             .expect("Failed to parse header"),
         );
-        let mut jar = PrivateCookieJar::from_headers(&req_headers, Key::derive_from(&[0; 32]));
+        let mut jar = PrivateCookieJar::from_headers(&req_headers, Key::from(&[0; 64]));
         assert_eq!(jar.get("foo").await, Some(Cookie::new("foo", "alpha")));
 
         jar.remove(Cookie::from("foo")).await;
@@ -300,7 +299,7 @@ mod test {
             .expect("Failed to parse header"),
         );
 
-        let jar = PrivateCookieJar::from_headers(&headers, Key::derive_from(&[0; 32]));
+        let jar = PrivateCookieJar::from_headers(&headers, Key::from(&[0; 64]));
 
         assert_eq!(jar.get("foo").await, Some(Cookie::new("foo", "alpha")));
         assert_eq!(jar.get("bar").await, Some(Cookie::new("bar", "beta")));
@@ -324,7 +323,7 @@ mod test {
         let app = Router::new()
             .route("/", get(test_handler))
             .layer(axum::middleware::from_fn(auto_cookie_middleware))
-            .with_state(Key::derive_from(&[0; 32]));
+            .with_state(Key::from(&[0; 64]));
 
         let response = app
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())

@@ -3,10 +3,11 @@ use std::{ops::Deref, sync::Arc};
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use time::Duration;
+use url::Url;
 
 #[derive(Clone)]
 pub struct InnerForcefieldState {
-    pub public_root: (),
+    pub public_root: Url,
     pub root_domain: String,
     pub login_cookie_expiration: Duration,
     pub cookie_encryption_key: Key,
@@ -40,7 +41,8 @@ impl ForcefieldState {
 impl Default for ForcefieldState {
     fn default() -> Self {
         Self(Arc::new(InnerForcefieldState {
-            public_root: (),
+            public_root: Url::parse("http://localhost/")
+                .expect("Failed to parse default test public root"),
             root_domain: "localhost".to_owned(),
             login_cookie_expiration: Duration::hours(24),
             cookie_encryption_key: Key::generate(),

@@ -6,16 +6,15 @@ use figment::{
     Figment, Profile,
     providers::{Format, Toml},
 };
-use rocket::{
-    http::uri::Absolute,
-    serde::{Deserialize, Deserializer, Serialize, de::Error},
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Error},
 };
-use serde::Serializer;
 use time::Duration;
+use url::Url;
 
 pub fn get_figment<P: Into<Profile>>(profile: P) -> Figment {
-    Figment::from(rocket::Config::default())
-        .merge(Toml::file("Rocket.toml").nested())
+    Figment::from(Toml::file("Rocket.toml").nested())
         .merge(Toml::file("secrets.toml"))
         .select(profile)
 }
@@ -26,9 +25,8 @@ pub fn get_test_figment() -> Figment {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-pub struct Config<'a> {
-    pub public_root: Absolute<'a>,
+pub struct Config {
+    pub public_root: Url,
     pub root_domain: String,
 
     pub secret_key: String,
@@ -46,7 +44,6 @@ pub struct Config<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
 pub struct ConfigUser {
     pub username: String,
 
@@ -72,7 +69,7 @@ fn serialize_password_hash_string<S: Serializer>(
 
 struct StrVisitor;
 
-impl<'a> rocket::serde::de::Visitor<'a> for StrVisitor {
+impl<'a> de::Visitor<'a> for StrVisitor {
     type Value = PasswordHashString;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
