@@ -92,11 +92,11 @@ pub async fn login(
 
 pub async fn logout(
     mut authenticated_user_manager: AuthenticatedUserManager,
-    Query(next): Query<Option<String>>,
+    Query(query): Query<LoginQueryParams>,
     State(state): State<ForcefieldState>,
 ) -> Redirect {
     authenticated_user_manager.clear_authenticated_user().await;
-    Redirect::to(get_redirect_uri(next, &state).as_str())
+    Redirect::to(get_redirect_uri(query.next, &state).as_str())
 }
 
 pub async fn hash_password(password: String) -> String {
@@ -585,7 +585,7 @@ mod tests {
         );
         let manager = AuthenticatedUserManager::new_for_test(cookies.clone(), state.clone());
 
-        let redirect = logout(manager, Query(None), State(state)).await;
+        let redirect = logout(manager, Query(LoginQueryParams::default()), State(state)).await;
 
         let response = redirect.into_response();
         assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
@@ -605,7 +605,10 @@ mod tests {
 
         let redirect = logout(
             manager,
-            Query(Some("https://example.com/goodbye".to_owned())),
+            Query(LoginQueryParams {
+                next: Some("https://example.com/goodbye".to_owned()),
+                error: None,
+            }),
             State(state),
         )
         .await;
