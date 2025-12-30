@@ -1,0 +1,4 @@
+public_root = "http://localhost:8000/"
+root_domain = "localhost"
+login_cookie_expiration = "1h"
+enable_hash_password = true

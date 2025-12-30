@@ -1,6 +1,6 @@
-use forcefield::start_server_with_default_config;
+use forcefield::start_server;
 
 #[tokio::main]
 async fn main() {
-    start_server_with_default_config().await.unwrap();
+    start_server().await.unwrap();
 }

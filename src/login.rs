@@ -174,9 +174,8 @@ mod tests {
 
     use crate::{
         authenticated_user::AuthenticatedUserManager,
-        config::ConfigUser,
         cookies::PrivateCookieJar,
-        state::{ForcefieldState, InnerForcefieldState},
+        state::{ForcefieldState, InnerForcefieldState, User},
     };
 
     fn test_state() -> ForcefieldState {
@@ -203,7 +202,7 @@ mod tests {
         let mut users = HashMap::new();
         users.insert(
             username.to_owned(),
-            ConfigUser {
+            User {
                 username: username.to_owned(),
                 password_hash,
             },
