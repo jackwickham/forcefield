@@ -171,9 +171,9 @@ mod test {
     use time::Duration;
 
     // The cookie name is added as additional data in the encrypted value, so the value is only valid with that specific cookie
-    const ENCRYPTED_FOO_ALPHA: &'static str = "MeWbk95B2umJO%2FSm7Hpe1E55VSLoQnC%2FOfuObXp8QrKp";
-    const ENCRYPTED_BAR_BETA: &'static str = "X2RrM0oLZvMeduelLZtighRauVolvihe1K3NIzBmvlM%3D";
-    const ENCRYPTED_BAZ_GAMMA: &'static str = "3WH2CbePTxjHyZZmq2AJxUhSMsDSGwK21NVgxOHjGMXN";
+    const ENCRYPTED_FOO_ALPHA: &'static str = "7IUfToI3IVvRZr5XovRbwQaJz3Nup1mDOXbNVwhcU3/J";
+    const ENCRYPTED_BAR_BETA: &'static str = "dBg7lkflW6OrzbtxDr/CyW54uHxEG/7whNdmQuEtMkQ%3D";
+    const ENCRYPTED_BAZ_GAMMA: &'static str = "gRpM+dl5ExtF1UDBay6AA4fy3c3yqkWrumPEyif0ccR";
 
     #[tokio::test]
     async fn parses_from_headers() {
