@@ -1,17 +1,22 @@
+use std::{str::FromStr, sync::Arc};
+
 use anyhow::Result;
 use axum::{
     Router,
     body::Body,
     extract::Request,
+    handler::Handler,
     http::{
-        HeaderValue, Response,
+        HeaderName, HeaderValue, Response,
         header::{
-            CONTENT_SECURITY_POLICY, REFERRER_POLICY, STRICT_TRANSPORT_SECURITY, X_XSS_PROTECTION,
+            CONTENT_SECURITY_POLICY, REFERRER_POLICY, STRICT_TRANSPORT_SECURITY,
+            X_CONTENT_TYPE_OPTIONS, X_XSS_PROTECTION,
         },
     },
     middleware::{self, Next},
     routing::{get, post},
 };
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::services::ServeDir;
 
 use crate::{
@@ -20,6 +25,7 @@ use crate::{
     cookies::auto_cookie_middleware,
     index::index_handler,
     login::{hash_password, login, logout, show_login},
+    rate_limit::ClientIpKeyExtractor,
     state::ForcefieldState,
 };
 
@@ -30,6 +36,7 @@ mod check_auth;
 mod cookies;
 mod index;
 mod login;
+mod rate_limit;
 mod state;
 
 pub async fn start_server() -> Result<()> {
@@ -43,12 +50,29 @@ pub async fn start_server() -> Result<()> {
 }
 
 pub fn create_app(config: ForcefieldConfig) -> Router<()> {
+    let login_rate_limiter = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(1)
+            .burst_size(2)
+            .key_extractor(ClientIpKeyExtractor::new(
+                config.client_ip_header.as_ref().map(|name| {
+                    HeaderName::from_str(name).expect("Failed to parse IP extractor header")
+                }),
+            ))
+            .finish()
+            .expect("Failed to build rate limiter config"),
+    );
+
+    let login_handler = login.layer(GovernorLayer {
+        config: login_rate_limiter,
+    });
     let mut app_builder = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
         .route("/check-auth", get(check_auth))
-        .route("/login", get(show_login).post(login))
+        .route("/login", get(show_login).post(login_handler))
         .route("/logout", get(logout))
         .nest_service("/static", ServeDir::new("static"));
+
     if config.enable_hash_password {
         app_builder = app_builder.route("/hash-password", post(hash_password));
     }
@@ -85,6 +109,7 @@ async fn response_headers_middleware(req: Request, next: Next) -> Response<Body>
         REFERRER_POLICY,
         HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
 
     res
 }

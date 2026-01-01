@@ -17,6 +17,7 @@ pub struct InnerForcefieldState {
     pub login_cookie_expiration: Duration,
     pub cookie_encryption_key: Key,
     pub users: HashMap<String, User>,
+    pub client_ip_header: Option<String>,
 }
 
 #[derive(Clone)]
@@ -86,6 +87,7 @@ impl TryFrom<ForcefieldConfig> for ForcefieldState {
                     .expect("Failed to deserialize encryption key"),
             ),
             users,
+            client_ip_header: config.client_ip_header,
         }))
     }
 }
@@ -100,6 +102,7 @@ impl Default for ForcefieldState {
             login_cookie_expiration: Duration::hours(24),
             cookie_encryption_key: Key::generate(),
             users: HashMap::new(),
+            client_ip_header: None,
         }))
     }
 }

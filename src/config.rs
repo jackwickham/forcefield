@@ -12,6 +12,10 @@ pub struct ForcefieldConfig {
     pub root_domain: String,
     pub enable_hash_password: bool,
 
+    /// Optional header name to read client IP from (e.g., "X-Real-IP").
+    /// If not set, the connecting socket address is used.
+    pub client_ip_header: Option<String>,
+
     #[serde(deserialize_with = "deserialize_duration_time")]
     pub login_cookie_expiration: Duration,
 

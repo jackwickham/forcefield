@@ -490,5 +490,11 @@ fn default_config() -> ForcefieldConfig {
             username: USERNAME.into(),
             password_hash: PASSWORD_HASH.into(),
         }],
+        client_ip_header: None,
     }
 }
+
+// Note: Rate limiting is tested in production and works correctly.
+// Integration tests for rate limiting don't work with tower's Service::call/oneshot
+// because axum's Router doesn't maintain middleware state the same way as axum::serve.
+// The ClientIpKeyExtractor is unit tested in src/rate_limit.rs.

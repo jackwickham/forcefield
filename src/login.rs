@@ -189,6 +189,7 @@ mod tests {
             login_cookie_expiration: time::Duration::hours(24),
             cookie_encryption_key: Key::generate(),
             users: HashMap::new(),
+            client_ip_header: None,
         })
     }
 
@@ -214,6 +215,7 @@ mod tests {
             login_cookie_expiration: time::Duration::days(90),
             cookie_encryption_key: Key::generate(),
             users,
+            client_ip_header: None,
         })
     }
 
