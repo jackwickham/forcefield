@@ -65,10 +65,9 @@ impl AuthenticatedUserManager {
     fn make_cookie(value: Option<&UserCookie>, config: &ForcefieldState) -> Cookie<'static> {
         Cookie::build((
             USER_COOKIE,
-            value.map_or_else(
-                || String::new(),
-                |val| serde_json::to_string(val).expect("Failed to serialize user cookie"),
-            ),
+            value.map_or_else(String::new, |val| {
+                serde_json::to_string(val).expect("Failed to serialize user cookie")
+            }),
         ))
         .domain(config.root_domain.clone())
         .max_age(config.login_cookie_expiration)
