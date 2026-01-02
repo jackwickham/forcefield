@@ -52,9 +52,10 @@ pub async fn start_server() -> Result<()> {
 }
 
 pub fn create_app(config: ForcefieldConfig) -> Router<()> {
-    let client_ip_header = config.client_ip_header.as_ref().map(|name| {
-        HeaderName::from_str(name).expect("Failed to parse IP extractor header")
-    });
+    let client_ip_header = config
+        .client_ip_header
+        .as_ref()
+        .map(|name| HeaderName::from_str(name).expect("Failed to parse IP extractor header"));
     let enable_hash_password = config.enable_hash_password;
 
     let state: ForcefieldState = config
@@ -71,9 +72,7 @@ pub fn create_app(config: ForcefieldConfig) -> Router<()> {
     );
 
     let login_handler = login
-        .layer(GovernorLayer {
-            config: login_rate_limiter,
-        })
+        .layer(GovernorLayer::new(login_rate_limiter))
         .layer(middleware::from_fn_with_state(state.clone(), same_origin));
     let mut app_builder = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
