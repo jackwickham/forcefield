@@ -26,6 +26,7 @@ use crate::{
     index::index_handler,
     login::{hash_password, login, logout, show_login},
     rate_limit::ClientIpKeyExtractor,
+    same_origin::same_origin,
     state::ForcefieldState,
 };
 
@@ -37,6 +38,7 @@ mod cookies;
 mod index;
 mod login;
 mod rate_limit;
+mod same_origin;
 mod state;
 
 pub async fn start_server() -> Result<()> {
@@ -50,22 +52,29 @@ pub async fn start_server() -> Result<()> {
 }
 
 pub fn create_app(config: ForcefieldConfig) -> Router<()> {
+    let client_ip_header = config.client_ip_header.as_ref().map(|name| {
+        HeaderName::from_str(name).expect("Failed to parse IP extractor header")
+    });
+    let enable_hash_password = config.enable_hash_password;
+
+    let state: ForcefieldState = config
+        .try_into()
+        .expect("Failed to convert config to state");
+
     let login_rate_limiter = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(1)
             .burst_size(2)
-            .key_extractor(ClientIpKeyExtractor::new(
-                config.client_ip_header.as_ref().map(|name| {
-                    HeaderName::from_str(name).expect("Failed to parse IP extractor header")
-                }),
-            ))
+            .key_extractor(ClientIpKeyExtractor::new(client_ip_header))
             .finish()
             .expect("Failed to build rate limiter config"),
     );
 
-    let login_handler = login.layer(GovernorLayer {
-        config: login_rate_limiter,
-    });
+    let login_handler = login
+        .layer(GovernorLayer {
+            config: login_rate_limiter,
+        })
+        .layer(middleware::from_fn_with_state(state.clone(), same_origin));
     let mut app_builder = Router::<ForcefieldState>::new()
         .route("/", get(index_handler))
         .route("/check-auth", get(check_auth))
@@ -73,18 +82,14 @@ pub fn create_app(config: ForcefieldConfig) -> Router<()> {
         .route("/logout", get(logout))
         .nest_service("/static", ServeDir::new("static"));
 
-    if config.enable_hash_password {
+    if enable_hash_password {
         app_builder = app_builder.route("/hash-password", post(hash_password));
     }
 
     app_builder
         .layer(middleware::from_fn(auto_cookie_middleware))
         .layer(middleware::from_fn(response_headers_middleware))
-        .with_state(
-            config
-                .try_into()
-                .expect("Failed to convert config to state"),
-        )
+        .with_state(state)
 }
 
 async fn response_headers_middleware(req: Request, next: Next) -> Response<Body> {

@@ -1,5 +1,5 @@
-use axum::body::Body;
-use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE};
+use axum::body::{self, Body};
+use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION, ORIGIN, SET_COOKIE};
 use axum::http::{HeaderValue, Request, Response, StatusCode};
 use cookie::{Cookie, CookieJar};
 use forcefield::config::{ConfigUser, ForcefieldConfig};
@@ -24,6 +24,7 @@ async fn login_rejects_invalid_username() {
                 .method("POST")
                 .uri("/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username=invalid&password={}",
                     PASSWORD
@@ -53,6 +54,7 @@ async fn login_rejects_invalid_password() {
                 .method("POST")
                 .uri("/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password=invalid",
                     USERNAME
@@ -73,6 +75,35 @@ async fn login_rejects_invalid_password() {
 }
 
 #[tokio::test]
+async fn login_rejects_cross_origin_requests() {
+    let app = create_app(default_config());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz")
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://evil.com")
+                .body(Body::from(format!(
+                    "username={}&password={}",
+                    USERNAME, PASSWORD
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.headers().get(SET_COOKIE), None);
+    assert_eq!(
+        str::from_utf8(&body::to_bytes(response.into_body(), 1000).await.unwrap())
+            .expect("Invalid response body"),
+        "Cross-origin request blocked"
+    );
+}
+
+#[tokio::test]
 async fn login_accepts_valid_credentials_and_redirects() {
     let app = create_app(default_config());
 
@@ -82,6 +113,7 @@ async fn login_accepts_valid_credentials_and_redirects() {
                 .method("POST")
                 .uri("/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -126,6 +158,7 @@ async fn login_accepts_valid_credentials_and_ignores_malicious_redirect_uri() {
                 .method("POST")
                 .uri("/login?next=https%3A%2F%2Fmalicious.example.org%2Ffoo%3Fbar%3Dbaz")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -170,6 +203,7 @@ async fn check_auth_returns_ok_when_logged_in() {
                 .method("POST")
                 .uri("/login")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -250,6 +284,7 @@ async fn check_auth_redirects_when_invalid_cookie() {
                 .method("POST")
                 .uri("/login")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -296,6 +331,7 @@ async fn check_auth_refreshes_cookie_when_nearly_expired() {
                 .method("POST")
                 .uri("/login")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -359,6 +395,7 @@ async fn check_auth_redirects_when_login_expired() {
                 .method("POST")
                 .uri("/login")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -420,6 +457,7 @@ async fn logout_clears_cookie_and_redirects() {
                 .method("POST")
                 .uri("/login")
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(ORIGIN, "https://forcefield.example.com")
                 .body(Body::from(format!(
                     "username={}&password={}",
                     USERNAME, PASSWORD
@@ -549,6 +587,7 @@ fn login_request(ip: &str) -> Request<Body> {
         .method("POST")
         .uri("/login")
         .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(ORIGIN, "https://forcefield.example.com")
         .header("x-real-ip", ip)
         .body(Body::from(format!(
             "username={}&password={}",
