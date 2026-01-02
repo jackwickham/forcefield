@@ -56,7 +56,7 @@ impl Deref for ForcefieldState {
     }
 }
 
-impl<'a> FromRef<ForcefieldState> for Key {
+impl FromRef<ForcefieldState> for Key {
     fn from_ref(state: &ForcefieldState) -> Self {
         state.0.as_ref().cookie_encryption_key.clone()
     }

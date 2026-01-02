@@ -7,7 +7,7 @@ use time::UtcDateTime;
 
 use crate::{cookies::PrivateCookieJar, state::ForcefieldState};
 
-const USER_COOKIE: &'static str = "forcefield_user";
+const USER_COOKIE: &str = "forcefield_user";
 
 pub struct AuthenticatedUserManager {
     cookies: PrivateCookieJar,
@@ -44,7 +44,7 @@ impl AuthenticatedUserManager {
     }
 
     pub async fn set_authenticated_user(&mut self, username: &str) {
-        assert!(username.len() > 0, "Username cannot be blank");
+        assert!(!username.is_empty(), "Username cannot be blank");
         self.cookies
             .add(AuthenticatedUserManager::make_cookie(
                 Some(&UserCookie {
@@ -65,9 +65,10 @@ impl AuthenticatedUserManager {
     fn make_cookie(value: Option<&UserCookie>, config: &ForcefieldState) -> Cookie<'static> {
         Cookie::build((
             USER_COOKIE,
-            value.map_or("".to_owned(), |val| {
-                serde_json::to_string(val).expect("Failed to serialize user cookie")
-            }),
+            value.map_or_else(
+                || String::new(),
+                |val| serde_json::to_string(val).expect("Failed to serialize user cookie"),
+            ),
         ))
         .domain(config.root_domain.clone())
         .max_age(config.login_cookie_expiration)

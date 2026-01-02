@@ -17,7 +17,7 @@ use crate::{
     state::ForcefieldState,
 };
 
-const DUMMY_HASH: &'static str = "$argon2id$v=19$m=19456,t=2,p=1$fKZfiZ9ioXzAPxb6I/IMLQ$EY+FN6zRB5YlFtHumtVWe/eGZUl1pmofDThztZHtL+U";
+const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$fKZfiZ9ioXzAPxb6I/IMLQ$EY+FN6zRB5YlFtHumtVWe/eGZUl1pmofDThztZHtL+U";
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub enum LoginError {
@@ -25,7 +25,7 @@ pub enum LoginError {
 }
 
 impl LoginError {
-    pub fn message(&self) -> &'static str {
+    pub fn message(self) -> &'static str {
         match self {
             LoginError::InvalidCredentials => "Username or password was incorrect",
         }

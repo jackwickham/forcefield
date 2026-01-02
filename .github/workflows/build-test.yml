@@ -12,6 +12,9 @@ jobs:
       - name: Test
         run: |
           cargo test
+      - name: Clippy
+        run: |
+          cargo clippy -- -Dwarnings
   docker-publish:
     runs-on: ubuntu-latest
     if: ${{ github.ref == 'refs/heads/main' }}

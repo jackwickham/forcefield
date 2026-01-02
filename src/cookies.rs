@@ -37,8 +37,7 @@ where
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let k = Key::from_ref(state);
-        let key = k.into();
+        let key = Key::from_ref(state);
         let jar = PrivateCookieJar::from_headers(&parts.headers, key);
 
         // Store the cookie jar in extensions, so updates to the jar can be picked up by the

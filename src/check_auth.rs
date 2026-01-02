@@ -39,7 +39,7 @@ pub async fn check_auth(
             ) {
                 redirect
                     .query_pairs_mut()
-                    .append_pair("next", &format!("https://{}{}", return_host, return_uri));
+                    .append_pair("next", &format!("https://{return_host}{return_uri}"));
             }
             Redirect::to(redirect.as_str())
         })
