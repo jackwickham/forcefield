@@ -6,6 +6,7 @@ use askama::Template;
 use axum::{
     Form,
     extract::{Query, State},
+    http::StatusCode,
     response::{Html, Redirect},
 };
 use serde::Deserialize;
@@ -49,7 +50,7 @@ pub async fn show_login(
             Ok(Html(
                 LoginTemplate {
                     submit_url,
-                    error: query.error,
+                    error: None,
                 }
                 .render()
                 .expect("Failed to render login template"),
@@ -63,7 +64,7 @@ pub async fn login(
     Query(query): Query<LoginQueryParams>,
     State(state): State<ForcefieldState>,
     Form(request): Form<LoginRequest>,
-) -> Redirect {
+) -> Result<Redirect, (StatusCode, Html<String>)> {
     let matching_user = state.users.get(&request.username);
 
     if verify_password(
@@ -74,19 +75,26 @@ pub async fn login(
         authenticated_user_manager
             .set_authenticated_user(&user.username)
             .await;
-        Redirect::to(get_redirect_uri(query.next, &state).as_str())
+        Ok(Redirect::to(get_redirect_uri(query.next, &state).as_str()))
     } else {
-        let mut redirect_uri = state
+        let mut submit_url = state
             .public_root
             .join("/login")
             .expect("Failed to construct login URI");
         if let Some(uri) = query.next {
-            redirect_uri.query_pairs_mut().append_pair("next", &uri);
+            submit_url.query_pairs_mut().append_pair("next", &uri);
         }
-        redirect_uri
-            .query_pairs_mut()
-            .append_pair("error", "InvalidCredentials");
-        Redirect::to(redirect_uri.as_str())
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Html(
+                LoginTemplate {
+                    submit_url,
+                    error: Some(LoginError::InvalidCredentials),
+                }
+                .render()
+                .expect("Failed to render login template"),
+            ),
+        ))
     }
 }
 
@@ -151,7 +159,6 @@ struct LoginTemplate {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct LoginQueryParams {
     next: Option<String>,
-    error: Option<LoginError>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -169,7 +176,12 @@ mod tests {
         Argon2,
         password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
     };
-    use axum::{extract::State, http::header::LOCATION, response::IntoResponse};
+    use axum::{
+        body::{self, Body},
+        extract::State,
+        http::{Response, header::LOCATION},
+        response::IntoResponse,
+    };
     use cookie::Key;
 
     use crate::{
@@ -215,6 +227,16 @@ mod tests {
             cookie_encryption_key: Key::generate(),
             users,
         })
+    }
+
+    async fn get_body(response: Response<Body>) -> String {
+        str::from_utf8(
+            &body::to_bytes(response.into_body(), 10000)
+                .await
+                .expect("Failed to parse body"),
+        )
+        .expect("Failed to parse body as utf8")
+        .to_owned()
     }
 
     #[tokio::test]
@@ -365,7 +387,6 @@ mod tests {
         let result = show_login(
             Query(LoginQueryParams {
                 next: Some("https://dashboard.example.com/dashboard".to_owned()),
-                error: None,
             }),
             Some(user),
             State(state),
@@ -434,20 +455,17 @@ mod tests {
         .await;
 
         let response = redirect.into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|h| h.to_str().ok())
-            .expect("Should have location header");
-        assert!(location.contains("/login"), "Should redirect to login page");
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let body = get_body(response).await;
         assert!(
-            location.contains("error=InvalidCredentials"),
-            "Should include error param"
+            body.contains(LoginError::InvalidCredentials.message()),
+            "Body {} did not contain invalid credentials message",
+            body
         );
-
-        let delta = cookies.get_delta().await;
-        assert!(delta.is_empty(), "Should not set authentication cookie");
+        assert!(
+            cookies.get_delta().await.is_empty(),
+            "Should not set authentication cookie"
+        );
     }
 
     #[tokio::test]
@@ -469,17 +487,17 @@ mod tests {
         .await;
 
         let response = redirect.into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|h| h.to_str().ok())
-            .expect("Should have location header");
-        assert!(location.contains("/login"));
-        assert!(location.contains("error=InvalidCredentials"));
-
-        let delta = cookies.get_delta().await;
-        assert!(delta.is_empty(), "Should not set authentication cookie");
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let body = get_body(response).await;
+        assert!(
+            body.contains(LoginError::InvalidCredentials.message()),
+            "Body {} did not contain invalid credentials message",
+            body
+        );
+        assert!(
+            cookies.get_delta().await.is_empty(),
+            "Should not set authentication cookie"
+        );
     }
 
     #[tokio::test]
@@ -493,7 +511,6 @@ mod tests {
             manager,
             Query(LoginQueryParams {
                 next: Some("https://example.com/dashboard".to_owned()),
-                error: None,
             }),
             State(state),
             Form(LoginRequest {
@@ -522,7 +539,6 @@ mod tests {
             manager,
             Query(LoginQueryParams {
                 next: Some("https://evil.com/phishing".to_owned()),
-                error: None,
             }),
             State(state),
             Form(LoginRequest {
@@ -551,7 +567,6 @@ mod tests {
             manager,
             Query(LoginQueryParams {
                 next: Some("https://example.com/dashboard".to_owned()),
-                error: None,
             }),
             State(state),
             Form(LoginRequest {
@@ -562,14 +577,24 @@ mod tests {
         .await;
 
         let response = redirect.into_response();
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|h| h.to_str().ok())
-            .expect("Should have location header");
-        assert!(location.contains("/login"));
-        assert!(location.contains("error=InvalidCredentials"));
-        assert!(location.contains("next="));
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let body = get_body(response).await;
+        assert!(
+            body.contains(LoginError::InvalidCredentials.message()),
+            "Body did not contain invalid credentials message:\n{}",
+            body
+        );
+        assert!(
+            body.contains(
+                r#"action="https://example.com/login?next=https%3A%2F%2Fexample.com%2Fdashboard""#
+            ),
+            "Body did not contain action link with next param:\n{}",
+            body
+        );
+        assert!(
+            cookies.get_delta().await.is_empty(),
+            "Should not set authentication cookie"
+        );
     }
 
     #[tokio::test]
@@ -607,7 +632,6 @@ mod tests {
             manager,
             Query(LoginQueryParams {
                 next: Some("https://example.com/goodbye".to_owned()),
-                error: None,
             }),
             State(state),
         )

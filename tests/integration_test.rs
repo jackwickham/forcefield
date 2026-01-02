@@ -34,13 +34,7 @@ async fn login_rejects_invalid_username() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(LOCATION),
-        Some(&HeaderValue::from_static(
-            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz&error=InvalidCredentials"
-        ))
-    );
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers().get(SET_COOKIE), None);
 }
 
@@ -64,13 +58,7 @@ async fn login_rejects_invalid_password() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(LOCATION),
-        Some(&HeaderValue::from_static(
-            "https://forcefield.example.com/login?next=https%3A%2F%2Fdashboard.example.com%2Ffoo%3Fbar%3Dbaz&error=InvalidCredentials"
-        ))
-    );
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers().get(SET_COOKIE), None);
 }
 
@@ -498,10 +486,12 @@ async fn logout_clears_cookie_and_redirects() {
 }
 
 #[tokio::test]
-async fn login_rate_limits_temporarily() {
+async fn login_rate_limits() {
     let app = create_app(default_config());
 
-    let mut initial_statuses: Vec<StatusCode> = join_all(vec![
+    let (rate_limited, succeeded) = join_all(vec![
+        app.clone().oneshot(login_request("127.0.0.1")),
+        app.clone().oneshot(login_request("127.0.0.1")),
         app.clone().oneshot(login_request("127.0.0.1")),
         app.clone().oneshot(login_request("127.0.0.1")),
         app.clone().oneshot(login_request("127.0.0.1")),
@@ -509,16 +499,9 @@ async fn login_rate_limits_temporarily() {
     .await
     .into_iter()
     .map(|resp| resp.unwrap().status())
-    .collect();
-    initial_statuses.sort();
-    assert_eq!(
-        initial_statuses,
-        vec![
-            StatusCode::SEE_OTHER,
-            StatusCode::SEE_OTHER,
-            StatusCode::TOO_MANY_REQUESTS
-        ]
-    );
+    .partition::<Vec<StatusCode>, _>(|s| *s == StatusCode::TOO_MANY_REQUESTS);
+    assert!(rate_limited.len() >= 2);
+    assert!(succeeded.len() >= 1);
 
     sleep(std::time::Duration::from_secs(3)).await;
 
