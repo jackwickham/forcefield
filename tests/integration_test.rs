@@ -4,6 +4,7 @@ use axum::http::{HeaderValue, Request, Response, StatusCode};
 use cookie::{Cookie, CookieJar};
 use forcefield::config::{ConfigUser, ForcefieldConfig};
 use forcefield::create_app;
+use futures::future::join_all;
 use time::Duration;
 use tokio::time::sleep;
 use tower::{Service, ServiceExt};
@@ -458,6 +459,56 @@ async fn logout_clears_cookie_and_redirects() {
     );
 }
 
+#[tokio::test]
+async fn login_rate_limits_temporarily() {
+    let app = create_app(default_config());
+
+    let mut initial_statuses: Vec<StatusCode> = join_all(vec![
+        app.clone().oneshot(login_request("127.0.0.1")),
+        app.clone().oneshot(login_request("127.0.0.1")),
+        app.clone().oneshot(login_request("127.0.0.1")),
+    ])
+    .await
+    .into_iter()
+    .map(|resp| resp.unwrap().status())
+    .collect();
+    initial_statuses.sort();
+    assert_eq!(
+        initial_statuses,
+        vec![
+            StatusCode::SEE_OTHER,
+            StatusCode::SEE_OTHER,
+            StatusCode::TOO_MANY_REQUESTS
+        ]
+    );
+
+    sleep(std::time::Duration::from_secs(3)).await;
+
+    let later_response = app
+        .clone()
+        .oneshot(login_request("127.0.0.1"))
+        .await
+        .unwrap();
+    assert_eq!(later_response.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn login_rate_limits_based_on_client_ip_header() {
+    let app = create_app(default_config());
+
+    join_all(vec![
+        app.clone().oneshot(login_request("127.0.0.1")),
+        app.clone().oneshot(login_request("127.0.0.2")),
+        app.clone().oneshot(login_request("127.0.0.3")),
+        app.clone().oneshot(login_request("127.0.0.4")),
+        app.clone().oneshot(login_request("127.0.0.5")),
+    ])
+    .await
+    .into_iter()
+    .map(|resp| resp.unwrap().status())
+    .for_each(|status| assert_eq!(status, StatusCode::SEE_OTHER));
+}
+
 fn extract_cookies(response: &Response<Body>, jar: &mut CookieJar) {
     for header in response.headers().get_all(SET_COOKIE) {
         if let Ok(cookie_str) = header.to_str() {
@@ -490,11 +541,18 @@ fn default_config() -> ForcefieldConfig {
             username: USERNAME.into(),
             password_hash: PASSWORD_HASH.into(),
         }],
-        client_ip_header: None,
+        client_ip_header: Some("x-real-ip".into()),
     }
 }
-
-// Note: Rate limiting is tested in production and works correctly.
-// Integration tests for rate limiting don't work with tower's Service::call/oneshot
-// because axum's Router doesn't maintain middleware state the same way as axum::serve.
-// The ClientIpKeyExtractor is unit tested in src/rate_limit.rs.
+fn login_request(ip: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("x-real-ip", ip)
+        .body(Body::from(format!(
+            "username={}&password={}",
+            USERNAME, PASSWORD
+        )))
+        .unwrap()
+}
