@@ -20,7 +20,7 @@ axum-extra = { version = "0.12.5", features = ["cookie", "cookie-private"] }
 base64 = "0.22.1"
 config = { version = "0.15.19", features = ["toml"] }
 cookie = { version = "0.18.1", features = ["private"] }
-duration-str = "0.19.0"
+duration-str = "0.20.0"
 futures = "0.3.31"
 password-hash = { version = "0.5.0", features = ["std"] }
 percent-encoding = "2.3.2"
