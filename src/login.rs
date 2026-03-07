@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::{
     authenticated_user::{AuthenticatedUser, AuthenticatedUserManager},
+    metrics,
     state::ForcefieldState,
 };
 
@@ -72,11 +73,13 @@ pub async fn login(
         matching_user.map(|user| &user.password_hash),
     ) && let Some(user) = matching_user
     {
+        metrics::record_login(true);
         authenticated_user_manager
             .set_authenticated_user(&user.username)
             .await;
         Ok(Redirect::to(get_redirect_uri(query.next, &state).as_str()))
     } else {
+        metrics::record_login(false);
         let mut submit_url = state
             .public_root
             .join("/login")

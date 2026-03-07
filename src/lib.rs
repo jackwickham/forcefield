@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use axum::{
@@ -16,6 +16,7 @@ use axum::{
     middleware::{self, Next},
     routing::{get, post},
 };
+use opentelemetry::KeyValue;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::services::ServeDir;
 
@@ -31,6 +32,7 @@ use crate::{
 };
 
 pub mod config;
+pub mod metrics;
 
 mod authenticated_user;
 mod check_auth;
@@ -43,6 +45,11 @@ mod state;
 
 pub async fn start_server() -> Result<()> {
     let config = ForcefieldConfig::load()?;
+    let _metrics_provider = config
+        .otlp_endpoint
+        .as_deref()
+        .map(metrics::init_metrics)
+        .transpose()?;
     let app = create_app(config);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000")
         .await
@@ -88,7 +95,29 @@ pub fn create_app(config: ForcefieldConfig) -> Router<()> {
     app_builder
         .layer(middleware::from_fn(auto_cookie_middleware))
         .layer(middleware::from_fn(response_headers_middleware))
+        .layer(middleware::from_fn(request_metrics_middleware))
         .with_state(state)
+}
+
+async fn request_metrics_middleware(req: Request, next: Next) -> Response<Body> {
+    let method = req.method().to_string();
+    let path = req.uri().path().to_owned();
+    let start = Instant::now();
+
+    let response = next.run(req).await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let status = response.status().as_u16() as i64;
+    metrics::http_request_duration().record(
+        duration,
+        &[
+            KeyValue::new("http.request.method", method),
+            KeyValue::new("url.path", path),
+            KeyValue::new("http.response.status_code", status),
+        ],
+    );
+
+    response
 }
 
 async fn response_headers_middleware(req: Request, next: Next) -> Response<Body> {

@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Redirect},
 };
 
-use crate::{authenticated_user::AuthenticatedUser, state::ForcefieldState};
+use crate::{authenticated_user::AuthenticatedUser, metrics, state::ForcefieldState};
 
 const AUTHENTICATED_USERNAME_HEADER: HeaderName = HeaderName::from_static("x-forcefield-username");
 const FORWARDED_HOST_HEADER: HeaderName = HeaderName::from_static("x-forwarded-host");
@@ -16,6 +16,7 @@ pub async fn check_auth(
     headers: HeaderMap,
     State(state): State<ForcefieldState>,
 ) -> Result<impl IntoResponse, Redirect> {
+    metrics::record_check_auth(maybe_user.is_some());
     maybe_user
         .map(|user| {
             (

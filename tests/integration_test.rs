@@ -563,6 +563,7 @@ fn default_config() -> ForcefieldConfig {
             password_hash: PASSWORD_HASH.into(),
         }],
         client_ip_header: Some("x-real-ip".into()),
+        otlp_endpoint: None,
     }
 }
 fn login_request(ip: &str) -> Request<Body> {

@@ -21,6 +21,10 @@ pub struct ForcefieldConfig {
 
     pub secret_key: String,
     pub users: Vec<ConfigUser>,
+
+    /// OTLP gRPC endpoint for metrics export (e.g., "http://localhost:4317").
+    /// If not set, metrics are not exported.
+    pub otlp_endpoint: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
