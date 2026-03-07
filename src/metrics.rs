@@ -6,7 +6,7 @@ use opentelemetry::{
     metrics::{Counter, Histogram},
 };
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::{Resource, metrics::SdkMeterProvider};
 
 pub fn init_metrics(otlp_endpoint: &str) -> Result<SdkMeterProvider> {
     let exporter = opentelemetry_otlp::MetricExporter::builder()
@@ -19,7 +19,14 @@ pub fn init_metrics(otlp_endpoint: &str) -> Result<SdkMeterProvider> {
         .with_interval(Duration::from_secs(60))
         .build();
 
-    let provider = SdkMeterProvider::builder().with_reader(reader).build();
+    let resource = Resource::builder()
+        .with_service_name("forcefield")
+        .build();
+
+    let provider = SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(reader)
+        .build();
 
     global::set_meter_provider(provider.clone());
     Ok(provider)
