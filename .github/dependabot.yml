@@ -6,9 +6,13 @@ updates:
       interval: "daily"
       time: "19:00"
       timezone: Europe/London
+    cooldown:
+      default-days: 5
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "daily"
       time: "19:00"
       timezone: "Europe/London"
+    cooldown:
+      default-days: 5
