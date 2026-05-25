@@ -31,7 +31,7 @@ tokio = { version = "1.52.3", features = ["full"] }
 tower-http = { version = "0.6.11", features = ["fs"] }
 opentelemetry = { version = "0.31", features = ["metrics"] }
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "metrics"] }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 tower_governor = "0.8"
 url = { version = "2.5.8", features = ["serde"] }
 
