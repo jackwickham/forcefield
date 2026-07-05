@@ -485,23 +485,32 @@ async fn logout_clears_cookie_and_redirects() {
     );
 }
 
-#[tokio::test]
+// Use multi-threaded runtme to ensure that requests that pass the rate limiter and run argon2 won't delay
+// the other requests enough to cause the test to flake
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn login_rate_limits() {
     let app = create_app(default_config());
 
-    let (rate_limited, succeeded) = join_all(vec![
-        app.clone().oneshot(login_request("127.0.0.1")),
-        app.clone().oneshot(login_request("127.0.0.1")),
-        app.clone().oneshot(login_request("127.0.0.1")),
-        app.clone().oneshot(login_request("127.0.0.1")),
-        app.clone().oneshot(login_request("127.0.0.1")),
-    ])
+    // Burst 20 requests from a single IP. The limiter allows a burst of 2, so
+    // the first couple are accepted and the rest are rejected.
+    let (rate_limited, succeeded) = join_all((0..20).map(|_| {
+        let app = app.clone();
+        tokio::spawn(async move { app.oneshot(login_request("127.0.0.1")).await })
+    }))
     .await
     .into_iter()
-    .map(|resp| resp.unwrap().status())
+    .map(|resp| resp.unwrap().unwrap().status())
     .partition::<Vec<StatusCode>, _>(|s| *s == StatusCode::TOO_MANY_REQUESTS);
-    assert!(rate_limited.len() >= 2);
-    assert!(succeeded.len() >= 1);
+    assert!(
+        !succeeded.is_empty(),
+        "expected the burst allowance to let some requests through, but all {} were rate limited",
+        rate_limited.len()
+    );
+    assert!(
+        rate_limited.len() >= 15,
+        "expected the bulk of a 20-request burst to be rate limited, but only {} were",
+        rate_limited.len()
+    );
 
     sleep(std::time::Duration::from_secs(3)).await;
 
