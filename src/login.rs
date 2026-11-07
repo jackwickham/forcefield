@@ -1,7 +1,4 @@
-use argon2::{
-    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
-};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::phc::PasswordHash};
 use askama::Template;
 use axum::{
     Form,
@@ -112,19 +109,18 @@ pub async fn logout(
 
 pub async fn hash_password(password: String) -> String {
     let a2 = Argon2::default();
-    let salt = SaltString::generate(&mut OsRng);
-    a2.hash_password(password.as_bytes(), &salt)
+    a2.hash_password(password.as_bytes())
         .expect("Failed to hash password")
         .to_string()
 }
 
-fn verify_password(password: &str, password_hash: Option<&PasswordHashString>) -> bool {
+fn verify_password(password: &str, password_hash: Option<&PasswordHash>) -> bool {
     Argon2::default()
         .verify_password(
             password.as_bytes(),
             &password_hash.map_or_else(
                 || PasswordHash::new(DUMMY_HASH).expect("Failed to parse dummy hash"),
-                |hash_str| hash_str.password_hash(),
+                Clone::clone,
             ),
         )
         .ok()
@@ -175,10 +171,6 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use argon2::{
-        Argon2,
-        password_hash::{PasswordHashString, SaltString, rand_core::OsRng},
-    };
     use axum::{
         body::{self, Body},
         extract::State,
@@ -209,10 +201,10 @@ mod tests {
 
     fn test_state_with_user(username: &str, password: &str) -> ForcefieldState {
         let password_hash = Argon2::default()
-            .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(password.as_bytes())
             .expect("Failed to hash password")
             .to_string();
-        let password_hash = PasswordHashString::new(&password_hash).expect("Invalid hash");
+        let password_hash = PasswordHash::new(&password_hash).expect("Invalid hash");
 
         let mut users = HashMap::new();
         users.insert(
@@ -246,16 +238,28 @@ mod tests {
     async fn test_hash_password_produces_valid_hash() {
         let password = "test_password_123";
         let hash = hash_password(password.to_owned()).await;
-        let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
+        let hash_string = PasswordHash::new(&hash).expect("Invalid hash");
 
         assert!(verify_password(password, Some(&hash_string)));
+    }
+
+    #[tokio::test]
+    async fn test_hash_password_uses_unique_salts() {
+        let first = hash_password("password".to_owned()).await;
+        let second = hash_password("password".to_owned()).await;
+        let first = PasswordHash::new(&first).expect("Invalid hash");
+        let second = PasswordHash::new(&second).expect("Invalid hash");
+
+        assert!(first.salt.is_some());
+        assert!(second.salt.is_some());
+        assert_ne!(first.salt, second.salt);
     }
 
     #[tokio::test]
     async fn test_verify_password_with_correct_password() {
         let password = "test_password_123";
         let hash = hash_password(password.to_owned()).await;
-        let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
+        let hash_string = PasswordHash::new(&hash).expect("Invalid hash");
 
         assert!(verify_password(password, Some(&hash_string)));
     }
@@ -264,7 +268,7 @@ mod tests {
     async fn test_verify_password_with_incorrect_password() {
         let password = "test_password_123";
         let hash = hash_password(password.to_owned()).await;
-        let hash_string = PasswordHashString::new(&hash).expect("Invalid hash");
+        let hash_string = PasswordHash::new(&hash).expect("Invalid hash");
 
         assert!(!verify_password("wrong_password", Some(&hash_string)));
     }

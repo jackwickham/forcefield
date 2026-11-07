@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc};
 
 use anyhow::{Error, Result};
-use argon2::password_hash::PasswordHashString;
+use argon2::password_hash::phc::PasswordHash;
 use axum::extract::FromRef;
 use axum_extra::extract::cookie::Key;
 use base64::Engine;
@@ -22,7 +22,7 @@ pub struct InnerForcefieldState {
 #[derive(Clone)]
 pub struct User {
     pub username: String,
-    pub password_hash: PasswordHashString,
+    pub password_hash: PasswordHash,
 }
 
 impl Debug for User {
@@ -40,7 +40,7 @@ impl TryFrom<ConfigUser> for User {
     fn try_from(user: ConfigUser) -> Result<Self> {
         Ok(User {
             username: user.username,
-            password_hash: PasswordHashString::new(&user.password_hash)?,
+            password_hash: PasswordHash::new(&user.password_hash)?,
         })
     }
 }
