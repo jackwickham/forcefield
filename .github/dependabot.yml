@@ -6,6 +6,12 @@ updates:
       interval: "daily"
       time: "19:00"
       timezone: Europe/London
+    groups:
+      opentelemetry:
+        patterns:
+          - "opentelemetry"
+          - "opentelemetry-*"
+          - "opentelemetry_*"
     cooldown:
       default-days: 5
   - package-ecosystem: "github-actions"
